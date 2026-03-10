@@ -1,11 +1,19 @@
-from apscheduler.schedulers.qt import QtScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from PySide6.QtCore import QObject, Signal
 
 
-class AppScheduler:
-    def __init__(self, callback):
-        self.callback = callback
-        self.scheduler = QtScheduler()
+class AppScheduler(QObject):
+    """
+    用 BackgroundScheduler（后台线程）触发定时任务。
+    通过 Qt Signal 将回调安全地派发到主线程。
+    """
+    _trigger = Signal()
+
+    def __init__(self, callback, parent=None):
+        super().__init__(parent)
+        self._trigger.connect(callback)          # callback 在主线程中执行
+        self.scheduler = BackgroundScheduler()
         self.scheduler.start()
         self._job = None
 
@@ -16,11 +24,14 @@ class AppScheduler:
             self._job = None
 
         if enabled and time_str:
-            hour, minute = map(int, time_str.split(":"))
-            self._job = self.scheduler.add_job(
-                self.callback,
-                CronTrigger(hour=hour, minute=minute),
-            )
+            try:
+                hour, minute = map(int, time_str.split(":"))
+                self._job = self.scheduler.add_job(
+                    self._trigger.emit,
+                    CronTrigger(hour=hour, minute=minute),
+                )
+            except Exception:
+                pass
 
     def shutdown(self):
         self.scheduler.shutdown(wait=False)

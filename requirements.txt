@@ -3,5 +3,4 @@ PySide6-Fluent-Widgets[full]==1.11.1
 psutil==6.1.1
 APScheduler==3.10.4
 PyYAML==6.0.2
-pyuac==0.0.3
 pyinstaller==6.7.0

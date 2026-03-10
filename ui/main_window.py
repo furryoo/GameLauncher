@@ -1,24 +1,34 @@
+import os
 import datetime
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QFrame,
+    QSystemTrayIcon, QMenu,
+)
 from PySide6.QtCore import Qt, QTime
+from PySide6.QtGui import QIcon, QAction
 from qfluentwidgets import (
     FluentWindow, NavigationItemPosition, FluentIcon,
     PrimaryPushButton, PushButton, BodyLabel, StrongBodyLabel,
     CaptionLabel, CardWidget, SwitchButton, TimeEdit,
     PlainTextEdit, SubtitleLabel, InfoBar, InfoBarPosition,
-    ScrollArea as FScrollArea, SmoothScrollArea,
+    SmoothScrollArea, TableWidget, HeaderView,
 )
+from PySide6.QtWidgets import QTableWidgetItem
 
 from core.config import AppConfig, TaskConfig, load_config, save_config
-from core.process_manager import TaskRunner
+from core.process_manager import TaskRunner, _format_duration
 from core.scheduler import AppScheduler
+from core import history
 from ui.task_list import DraggableTaskList
 
 
-class MainInterface(QWidget):
+# ─────────────────────────────────────────────────────────────
+# 启动器主界面
+# ─────────────────────────────────────────────────────────────
+class LauncherInterface(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setObjectName("mainInterface")
+        self.setObjectName("launcherInterface")
         self.config = load_config()
         self.runner: TaskRunner | None = None
         self._setup_ui()
@@ -30,30 +40,29 @@ class MainInterface(QWidget):
         root.setContentsMargins(24, 16, 24, 16)
         root.setSpacing(16)
 
-        # --- 标题区 ---
+        # 标题 + 状态
         title_row = QHBoxLayout()
-        title_label = SubtitleLabel("Game Automation Launcher")
-        self.status_label = CaptionLabel("就绪")
-        title_row.addWidget(title_label)
+        title_row.addWidget(SubtitleLabel("Game Automation Launcher"))
         title_row.addStretch()
+        self.status_label = CaptionLabel("就绪")
         title_row.addWidget(self.status_label)
         root.addLayout(title_row)
 
-        # --- 任务列表（可滚动）---
+        # 任务列表（可滚动）
         scroll = SmoothScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-
         self.task_list = DraggableTaskList()
         self.task_list.changed.connect(self._auto_save)
         scroll.setWidget(self.task_list)
-        scroll.setMinimumHeight(300)
+        scroll.setMinimumHeight(280)
         root.addWidget(scroll, stretch=1)
 
-        # --- 调度设置卡片 ---
+        # 调度 + 控制按钮卡片
         sched_card = CardWidget()
         sched_layout = QHBoxLayout(sched_card)
         sched_layout.setContentsMargins(16, 12, 16, 12)
+        sched_layout.setSpacing(10)
 
         sched_layout.addWidget(BodyLabel("定时启动:"))
         self.sched_switch = SwitchButton()
@@ -64,7 +73,6 @@ class MainInterface(QWidget):
         self.time_edit.setDisplayFormat("HH:mm")
         self.time_edit.timeChanged.connect(self._on_schedule_changed)
         sched_layout.addWidget(self.time_edit)
-
         sched_layout.addStretch()
 
         self.start_btn = PrimaryPushButton(FluentIcon.PLAY, "立即启动")
@@ -77,24 +85,24 @@ class MainInterface(QWidget):
         sched_layout.addWidget(self.stop_btn)
         root.addWidget(sched_card)
 
-        # --- 日志面板 ---
+        # 日志面板
         log_header = QHBoxLayout()
         log_header.addWidget(StrongBodyLabel("运行日志"))
         log_header.addStretch()
         clear_btn = PushButton("清空")
         clear_btn.setFixedWidth(64)
-        clear_btn.clicked.connect(self._clear_log)
+        clear_btn.clicked.connect(lambda: self.log_edit.clear())
         log_header.addWidget(clear_btn)
         root.addLayout(log_header)
 
         self.log_edit = PlainTextEdit()
         self.log_edit.setReadOnly(True)
-        self.log_edit.setFixedHeight(200)
-        self.log_edit.setPlaceholderText("运行日志将显示在这里...")
+        self.log_edit.setFixedHeight(180)
+        self.log_edit.setPlaceholderText("运行日志将在此显示...")
         root.addWidget(self.log_edit)
 
     def _setup_scheduler(self):
-        self.scheduler = AppScheduler(callback=self.start_runner)
+        self.scheduler = AppScheduler(callback=self.start_runner, parent=self)
 
     def _load_config_to_ui(self):
         self.task_list.load_tasks(self.config.tasks)
@@ -121,11 +129,13 @@ class MainInterface(QWidget):
             self.config.schedule.time,
         )
 
+    # ── 运行控制 ──────────────────────────────────────────────
+
     def start_runner(self):
         tasks = [t for t in self.task_list.get_tasks() if t.enabled and t.exe_path]
         if not tasks:
-            InfoBar.warning("提示", "没有可运行的任务，请先配置路径", parent=self,
-                            position=InfoBarPosition.TOP)
+            InfoBar.warning("提示", "没有可运行的任务，请先配置路径",
+                            parent=self, position=InfoBarPosition.TOP)
             return
         if self.runner and self.runner.isRunning():
             return
@@ -150,54 +160,155 @@ class MainInterface(QWidget):
         self.stop_btn.setEnabled(False)
         self.status_label.setText("已停止")
 
+    # ── Runner 信号处理 ───────────────────────────────────────
+
     def _on_task_started(self, index, name):
-        cards = self.task_list.get_cards()
-        # 找到对应卡片（按任务名匹配）
-        for card in cards:
+        for card in self.task_list.get_cards():
             if card.task.name == name:
                 card.set_status("running")
 
     def _on_task_finished(self, index, name, elapsed):
-        cards = self.task_list.get_cards()
-        mins, secs = divmod(elapsed, 60)
-        hours, mins = divmod(mins, 60)
-        duration = f"{hours}h {mins}m {secs}s" if hours else f"{mins}m {secs}s"
-        for card in cards:
+        duration = _format_duration(elapsed)
+        for card in self.task_list.get_cards():
             if card.task.name == name:
                 card.set_status("done", duration)
+        history.add_record(name, "success", elapsed)
 
     def _on_task_failed(self, index, name, reason):
-        cards = self.task_list.get_cards()
-        for card in cards:
+        for card in self.task_list.get_cards():
             if card.task.name == name:
                 card.set_status("error")
+        history.add_record(name, "failed", 0)
 
     def _on_all_done(self):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.status_label.setText("全部完成 ✓")
-        InfoBar.success("完成", "所有任务已运行完毕", parent=self,
-                        position=InfoBarPosition.TOP)
+        InfoBar.success("完成", "所有任务已运行完毕",
+                        parent=self, position=InfoBarPosition.TOP)
+        # Windows 系统通知（通过托盘图标）
+        tray = self.window().tray_icon if hasattr(self.window(), "tray_icon") else None
+        if tray and tray.isVisible():
+            tray.showMessage("Game Launcher", "所有任务已完成 ✓",
+                             QSystemTrayIcon.MessageIcon.Information, 3000)
 
     def _append_log(self, text: str):
         now = datetime.datetime.now().strftime("%H:%M:%S")
         self.log_edit.appendPlainText(f"[{now}] {text}")
-
-    def _clear_log(self):
-        self.log_edit.clear()
+        self.log_edit.ensureCursorVisible()
 
 
+# ─────────────────────────────────────────────────────────────
+# 历史记录界面
+# ─────────────────────────────────────────────────────────────
+class HistoryInterface(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("historyInterface")
+        self._setup_ui()
+
+    def _setup_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 16, 24, 16)
+        root.setSpacing(12)
+
+        header = QHBoxLayout()
+        header.addWidget(SubtitleLabel("运行历史"))
+        header.addStretch()
+        refresh_btn = PushButton(FluentIcon.SYNC, "刷新")
+        refresh_btn.clicked.connect(self.refresh)
+        header.addWidget(refresh_btn)
+        root.addLayout(header)
+
+        self.table = TableWidget()
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["时间", "任务", "状态", "时长"])
+        self.table.horizontalHeader().setSectionResizeMode(
+            0, HeaderView.ResizeMode.ResizeToContents
+        )
+        self.table.horizontalHeader().setSectionResizeMode(
+            1, HeaderView.ResizeMode.Stretch
+        )
+        self.table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        root.addWidget(self.table)
+        self.refresh()
+
+    def refresh(self):
+        records = history.get_records()
+        self.table.setRowCount(len(records))
+        status_text = {"success": "成功", "failed": "失败",
+                       "timeout": "超时", "stopped": "已停止"}
+        for row, rec in enumerate(records):
+            self.table.setItem(row, 0, QTableWidgetItem(rec.get("time", "")))
+            self.table.setItem(row, 1, QTableWidgetItem(rec.get("task", "")))
+            self.table.setItem(row, 2, QTableWidgetItem(
+                status_text.get(rec.get("status", ""), rec.get("status", ""))
+            ))
+            secs = rec.get("duration", 0)
+            self.table.setItem(row, 3, QTableWidgetItem(_format_duration(secs)))
+
+
+# ─────────────────────────────────────────────────────────────
+# 主窗口
+# ─────────────────────────────────────────────────────────────
 class MainWindow(FluentWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Game Automation Launcher")
-        self.resize(860, 720)
+        self.resize(900, 740)
+        self._setup_interfaces()
+        self._setup_tray()
 
-        self.main_interface = MainInterface()
+    def _setup_interfaces(self):
+        self.launcher = LauncherInterface()
         self.addSubInterface(
-            self.main_interface,
-            FluentIcon.PLAY,
-            "启动器",
+            self.launcher, FluentIcon.PLAY, "启动器",
             NavigationItemPosition.TOP,
         )
-        self.navigationInterface.setExpandWidth(180)
+        self.history_view = HistoryInterface()
+        self.addSubInterface(
+            self.history_view, FluentIcon.HISTORY, "历史记录",
+            NavigationItemPosition.TOP,
+        )
+        self.navigationInterface.setExpandWidth(160)
+
+    def _setup_tray(self):
+        self.tray_icon = QSystemTrayIcon(self)
+        # 使用内置图标（打包后可替换为自定义 ico）
+        self.tray_icon.setIcon(self.style().standardIcon(
+            self.style().StandardPixmap.SP_ComputerIcon
+        ))
+        tray_menu = QMenu()
+        show_action = QAction("显示窗口", self)
+        show_action.triggered.connect(self.show)
+        quit_action = QAction("退出", self)
+        quit_action.triggered.connect(self._quit)
+        tray_menu.addAction(show_action)
+        tray_menu.addSeparator()
+        tray_menu.addAction(quit_action)
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.activated.connect(self._on_tray_activated)
+        self.tray_icon.show()
+
+    def _on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self.show()
+            self.raise_()
+
+    def closeEvent(self, event):
+        # 关闭窗口时最小化到托盘而非退出
+        event.ignore()
+        self.hide()
+        self.tray_icon.showMessage(
+            "Game Launcher", "程序已最小化到托盘，双击图标可重新打开",
+            QSystemTrayIcon.MessageIcon.Information, 2000,
+        )
+
+    def _quit(self):
+        self.tray_icon.hide()
+        if self.launcher.runner and self.launcher.runner.isRunning():
+            self.launcher.runner.stop()
+            self.launcher.runner.wait(3000)
+        self.launcher.scheduler.shutdown()
+        import sys; sys.exit(0)
