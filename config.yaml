@@ -1,0 +1,14 @@
+tasks:
+  - name: BetterGI
+    exe_path: ''
+    process_name: BetterGI.exe
+    timeout: 0
+    enabled: true
+  - name: OKWW
+    exe_path: ''
+    process_name: okww.exe
+    timeout: 0
+    enabled: true
+schedule:
+  enabled: false
+  time: '22:00'
