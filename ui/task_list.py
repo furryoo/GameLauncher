@@ -3,6 +3,7 @@ from PySide6.QtCore import Signal
 from qfluentwidgets import PrimaryPushButton, FluentIcon
 
 from core.config import TaskConfig
+from core.enums import CardStatus
 from ui.task_card import TaskCard
 
 
@@ -33,15 +34,15 @@ class DraggableTaskList(QWidget):
 
     # ── 公开 API ─────────────────────────────────────────────
 
-    def add_task(self, config: TaskConfig | None = None) -> TaskCard:
+    def add_task(self, config: TaskConfig | None = None, *, _silent: bool = False) -> TaskCard:
         if config is None:
             config = TaskConfig(name=f"任务 {len(self._cards) + 1}")
         card = TaskCard(config)
         self._connect_card(card)
-        idx = len(self._cards)
         self._cards.append(card)
-        self._layout.insertWidget(idx, card)
-        self.changed.emit()
+        self._layout.insertWidget(len(self._cards) - 1, card)
+        if not _silent:
+            self.changed.emit()
         return card
 
     def remove_card(self, card: TaskCard):
@@ -75,7 +76,7 @@ class DraggableTaskList(QWidget):
     def load_tasks(self, task_configs: list[TaskConfig]):
         self._clear()
         for config in task_configs:
-            self.add_task(config)
+            self.add_task(config, _silent=True)
 
     def get_tasks(self) -> list[TaskConfig]:
         return [c.task for c in self._cards]
@@ -88,4 +89,4 @@ class DraggableTaskList(QWidget):
 
     def reset_all_status(self):
         for card in self._cards:
-            card.set_status("idle")
+            card.set_status(CardStatus.IDLE)
