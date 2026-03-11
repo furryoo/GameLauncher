@@ -6,6 +6,7 @@ from qfluentwidgets import (
     SpinBox, SwitchButton, ToolButton, FluentIcon,
 )
 from core.enums import CardStatus
+from ui.theme import COLOR_SUCCESS, COLOR_INFO, COLOR_ERROR
 
 
 class TaskCard(CardWidget):
@@ -119,7 +120,7 @@ class TaskCard(CardWidget):
     def _validate_path(self):
         text = self.task.exe_path
         invalid = bool(text) and not os.path.isfile(text)
-        self.path_edit.setStyleSheet("border: 1px solid #e74c3c;" if invalid else "")
+        self.path_edit.setStyleSheet(f"border: 1px solid {COLOR_ERROR};" if invalid else "")
 
     def _browse(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -131,9 +132,9 @@ class TaskCard(CardWidget):
     def set_status(self, status: CardStatus | str, elapsed_text: str = ""):
         color_map = {
             CardStatus.IDLE:    ("等待中",    ""),
-            CardStatus.RUNNING: ("运行中 ●", "#2ecc71"),
-            CardStatus.DONE:    ("已完成 ✓", "#3498db"),
-            CardStatus.ERROR:   ("出错 ✗",   "#e74c3c"),
+            CardStatus.RUNNING: ("运行中 ●", COLOR_SUCCESS),
+            CardStatus.DONE:    ("已完成 ✓", COLOR_INFO),
+            CardStatus.ERROR:   ("出错 ✗",   COLOR_ERROR),
         }
         text, color = color_map.get(CardStatus(status), ("等待中", ""))
         self.status_label.setText(text)

@@ -1,9 +1,8 @@
-import sys
 import os
 import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame,
-    QSystemTrayIcon, QMenu,
+    QSystemTrayIcon, QMenu, QApplication,
 )
 from PySide6.QtCore import Qt, QTime, Signal
 from PySide6.QtGui import QAction
@@ -315,4 +314,4 @@ class MainWindow(FluentWindow):
             self.launcher.runner.stop()
             self.launcher.runner.wait(3000)
         self.launcher.scheduler.shutdown()
-        sys.exit(0)
+        QApplication.instance().quit()

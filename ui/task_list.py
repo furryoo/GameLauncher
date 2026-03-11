@@ -65,9 +65,15 @@ class DraggableTaskList(QWidget):
             self._layout.insertWidget(i + 1, card)
             self.changed.emit()
 
+    def _clear(self):
+        """静默清空所有卡片，不触发 changed 信号"""
+        for card in self._cards:
+            self._layout.removeWidget(card)
+            card.deleteLater()
+        self._cards.clear()
+
     def load_tasks(self, task_configs: list[TaskConfig]):
-        for card in list(self._cards):
-            self.remove_card(card)
+        self._clear()
         for config in task_configs:
             self.add_task(config)
 

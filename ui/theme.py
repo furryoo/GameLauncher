@@ -1,0 +1,3 @@
+COLOR_SUCCESS = "#2ecc71"
+COLOR_INFO    = "#3498db"
+COLOR_ERROR   = "#e74c3c"
