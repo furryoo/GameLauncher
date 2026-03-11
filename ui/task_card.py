@@ -11,14 +11,13 @@ from ui.theme import COLOR_SUCCESS, COLOR_INFO, COLOR_ERROR
 
 class TaskCard(CardWidget):
     changed = Signal()
-    remove_requested = Signal(object)
+    remove_requested  = Signal(object)
     move_up_requested = Signal(object)
     move_down_requested = Signal(object)
 
     def __init__(self, task_config, parent=None):
         super().__init__(parent)
         self.task = task_config
-        # 防抖定时器：路径验证 300ms 后触发，避免每次按键都调用 isfile
         self._path_timer = QTimer(self)
         self._path_timer.setSingleShot(True)
         self._path_timer.setInterval(300)
@@ -27,12 +26,12 @@ class TaskCard(CardWidget):
         self._load_from_config()
 
     def _setup_ui(self):
-        self.setFixedHeight(170)
+        self.setFixedHeight(210)
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 10, 16, 10)
-        root.setSpacing(8)
+        root.setSpacing(6)
 
-        # 顶部行
+        # ── 顶部行：名称 + 状态 + 启用 + 排序 + 删除 ──
         top = QHBoxLayout()
         self.name_edit = LineEdit()
         self.name_edit.setPlaceholderText("任务名称")
@@ -67,54 +66,80 @@ class TaskCard(CardWidget):
         top.addWidget(down_btn)
         top.addWidget(del_btn)
 
-        # 路径行
+        # ── 路径行 ──
         path_row = QHBoxLayout()
         self.path_edit = LineEdit()
         self.path_edit.setPlaceholderText("程序路径（.exe）")
         self.path_edit.textChanged.connect(self._on_path_changed)
-
         browse_btn = PushButton("浏览")
         browse_btn.setFixedWidth(64)
         browse_btn.clicked.connect(self._browse)
-
         path_row.addWidget(BodyLabel("路径:"))
         path_row.addWidget(self.path_edit)
         path_row.addWidget(browse_btn)
 
-        # 超时 + 运行时间行
-        bottom = QHBoxLayout()
+        # ── 超时 + 运行时间行 ──
+        timeout_row = QHBoxLayout()
         self.timeout_spin = SpinBox()
         self.timeout_spin.setRange(0, 86400)
         self.timeout_spin.setSuffix(" 秒  (0=不限制)")
-        self.timeout_spin.setFixedWidth(210)
+        self.timeout_spin.setFixedWidth(200)
         self.timeout_spin.valueChanged.connect(self._on_changed)
         self.elapsed_label = CaptionLabel("运行时间: --")
+        timeout_row.addWidget(BodyLabel("超时:"))
+        timeout_row.addWidget(self.timeout_spin)
+        timeout_row.addStretch()
+        timeout_row.addWidget(self.elapsed_label)
 
-        bottom.addWidget(BodyLabel("超时:"))
-        bottom.addWidget(self.timeout_spin)
-        bottom.addStretch()
-        bottom.addWidget(self.elapsed_label)
+        # ── 重试 + 延迟行 ──
+        extra_row = QHBoxLayout()
+
+        self.retry_spin = SpinBox()
+        self.retry_spin.setRange(0, 5)
+        self.retry_spin.setSuffix(" 次")
+        self.retry_spin.setFixedWidth(90)
+        self.retry_spin.setToolTip("异常退出后自动重试次数（0=不重试）")
+        self.retry_spin.valueChanged.connect(self._on_changed)
+
+        self.delay_spin = SpinBox()
+        self.delay_spin.setRange(0, 300)
+        self.delay_spin.setSuffix(" 秒")
+        self.delay_spin.setFixedWidth(90)
+        self.delay_spin.setToolTip("上一个任务结束后，等待多少秒再启动本任务")
+        self.delay_spin.valueChanged.connect(self._on_changed)
+
+        extra_row.addWidget(BodyLabel("失败重试:"))
+        extra_row.addWidget(self.retry_spin)
+        extra_row.addSpacing(16)
+        extra_row.addWidget(BodyLabel("启动延迟:"))
+        extra_row.addWidget(self.delay_spin)
+        extra_row.addStretch()
 
         root.addLayout(top)
         root.addLayout(path_row)
-        root.addLayout(bottom)
+        root.addLayout(timeout_row)
+        root.addLayout(extra_row)
 
     def _load_from_config(self):
         self.name_edit.setText(self.task.name)
         self.path_edit.setText(self.task.exe_path)
         self.timeout_spin.setValue(self.task.timeout)
         self.enable_switch.setChecked(self.task.enabled)
+        self.retry_spin.setValue(self.task.retry_count)
+        self.delay_spin.setValue(self.task.delay_seconds)
 
     def _on_changed(self):
-        self.task.name = self.name_edit.text()
-        self.task.timeout = self.timeout_spin.value()
-        self.task.enabled = self.enable_switch.isChecked()
+        self.task.name          = self.name_edit.text()
+        self.task.timeout       = self.timeout_spin.value()
+        self.task.enabled       = self.enable_switch.isChecked()
+        self.task.retry_count   = self.retry_spin.value()
+        self.task.delay_seconds = self.delay_spin.value()
         self.changed.emit()
 
     def _on_path_changed(self, text):
-        self.task.exe_path = text
+        self.task.exe_path     = text
         self.task.process_name = os.path.basename(text) if text else ""
-        self._path_timer.start()   # 防抖：300ms 后验证
+        self._path_timer.start()
         self.changed.emit()
 
     def _validate_path(self):

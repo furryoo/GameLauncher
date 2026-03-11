@@ -11,14 +11,14 @@ from qfluentwidgets import (
     PrimaryPushButton, PushButton, BodyLabel, StrongBodyLabel,
     CaptionLabel, CardWidget, SwitchButton, TimeEdit,
     PlainTextEdit, SubtitleLabel, InfoBar, InfoBarPosition,
-    SmoothScrollArea, TableWidget, HeaderView,
+    SmoothScrollArea, TableWidget, HeaderView, ComboBox,
 )
 from PySide6.QtWidgets import QTableWidgetItem
 
 from core.config import load_config, save_config
-from core.enums import CardStatus, RunResult
+from core.enums import CardStatus, RunResult, PostAction
 from core.utils import format_duration
-from core.process_manager import TaskRunner
+from core.process_manager import TaskRunner, execute_post_action
 from core.scheduler import AppScheduler
 from core import history
 from ui.task_list import DraggableTaskList
@@ -77,6 +77,13 @@ class LauncherInterface(QWidget):
         self.time_edit.setDisplayFormat("HH:mm")
         self.time_edit.timeChanged.connect(self._on_schedule_changed)
         sched_layout.addWidget(self.time_edit)
+
+        sched_layout.addSpacing(12)
+        sched_layout.addWidget(BodyLabel("完成后:"))
+        self.post_action_combo = ComboBox()
+        self.post_action_combo.addItems(["无", "关机", "休眠"])
+        self.post_action_combo.currentIndexChanged.connect(self._on_schedule_changed)
+        sched_layout.addWidget(self.post_action_combo)
         sched_layout.addStretch()
 
         self.start_btn = PrimaryPushButton(FluentIcon.PLAY, "立即启动")
@@ -115,6 +122,8 @@ class LauncherInterface(QWidget):
         if sched.time:
             h, m = map(int, sched.time.split(":"))
             self.time_edit.setTime(QTime(h, m))
+        _action_index = {PostAction.NONE: 0, PostAction.SHUTDOWN: 1, PostAction.HIBERNATE: 2}
+        self.post_action_combo.setCurrentIndex(_action_index.get(sched.post_action, 0))
         self._apply_schedule()
 
     def _auto_save(self):
@@ -124,6 +133,8 @@ class LauncherInterface(QWidget):
     def _on_schedule_changed(self):
         self.config.schedule.enabled = self.sched_switch.isChecked()
         self.config.schedule.time = self.time_edit.time().toString("HH:mm")
+        _index_action = [PostAction.NONE, PostAction.SHUTDOWN, PostAction.HIBERNATE]
+        self.config.schedule.post_action = _index_action[self.post_action_combo.currentIndex()]
         save_config(self.config)
         self._apply_schedule()
 
@@ -145,7 +156,7 @@ class LauncherInterface(QWidget):
             return
 
         self.task_list.reset_all_status()
-        self.runner = TaskRunner(tasks)
+        self.runner = TaskRunner(tasks, post_action=self.config.schedule.post_action)
         self.runner.log_signal.connect(self._append_log)
         self.runner.task_started.connect(self._on_task_started)
         self.runner.task_finished.connect(self._on_task_finished)
@@ -180,13 +191,14 @@ class LauncherInterface(QWidget):
             card.set_status(CardStatus.ERROR)
         history.add_record(name, RunResult.FAILED, 0)
 
-    def _on_all_done(self):
+    def _on_all_done(self, post_action: str):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.status_label.setText("全部完成 ✓")
         InfoBar.success("完成", "所有任务已运行完毕",
                         parent=self, position=InfoBarPosition.TOP)
         self.notify.emit("Game Launcher", "所有任务已完成 ✓")
+        execute_post_action(post_action, self._append_log)
 
     def _append_log(self, text: str):
         now = datetime.datetime.now().strftime("%H:%M:%S")

@@ -13,3 +13,9 @@ class RunResult(StrEnum):
     FAILED  = "failed"
     TIMEOUT = "timeout"
     STOPPED = "stopped"
+
+
+class PostAction(StrEnum):
+    NONE     = "none"
+    SHUTDOWN = "shutdown"
+    HIBERNATE = "hibernate"
