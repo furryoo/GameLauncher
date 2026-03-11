@@ -1,11 +1,12 @@
+import sys
 import os
 import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame,
     QSystemTrayIcon, QMenu,
 )
-from PySide6.QtCore import Qt, QTime
-from PySide6.QtGui import QIcon, QAction
+from PySide6.QtCore import Qt, QTime, Signal
+from PySide6.QtGui import QAction
 from qfluentwidgets import (
     FluentWindow, NavigationItemPosition, FluentIcon,
     PrimaryPushButton, PushButton, BodyLabel, StrongBodyLabel,
@@ -15,8 +16,10 @@ from qfluentwidgets import (
 )
 from PySide6.QtWidgets import QTableWidgetItem
 
-from core.config import AppConfig, TaskConfig, load_config, save_config
-from core.process_manager import TaskRunner, _format_duration
+from core.config import load_config, save_config
+from core.enums import CardStatus, RunResult
+from core.utils import format_duration
+from core.process_manager import TaskRunner
 from core.scheduler import AppScheduler
 from core import history
 from ui.task_list import DraggableTaskList
@@ -26,6 +29,8 @@ from ui.task_list import DraggableTaskList
 # 启动器主界面
 # ─────────────────────────────────────────────────────────────
 class LauncherInterface(QWidget):
+    notify = Signal(str, str)   # (title, message) → 由主窗口连接到托盘通知
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("launcherInterface")
@@ -48,7 +53,7 @@ class LauncherInterface(QWidget):
         title_row.addWidget(self.status_label)
         root.addLayout(title_row)
 
-        # 任务列表（可滚动）
+        # 任务列表
         scroll = SmoothScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -58,7 +63,7 @@ class LauncherInterface(QWidget):
         scroll.setMinimumHeight(280)
         root.addWidget(scroll, stretch=1)
 
-        # 调度 + 控制按钮卡片
+        # 调度 + 控制按钮
         sched_card = CardWidget()
         sched_layout = QHBoxLayout(sched_card)
         sched_layout.setContentsMargins(16, 12, 16, 12)
@@ -162,23 +167,19 @@ class LauncherInterface(QWidget):
 
     # ── Runner 信号处理 ───────────────────────────────────────
 
-    def _on_task_started(self, index, name):
-        for card in self.task_list.get_cards():
-            if card.task.name == name:
-                card.set_status("running")
+    def _on_task_started(self, _index: int, name: str):
+        if card := self.task_list.get_card_by_name(name):
+            card.set_status(CardStatus.RUNNING)
 
-    def _on_task_finished(self, index, name, elapsed):
-        duration = _format_duration(elapsed)
-        for card in self.task_list.get_cards():
-            if card.task.name == name:
-                card.set_status("done", duration)
-        history.add_record(name, "success", elapsed)
+    def _on_task_finished(self, _index: int, name: str, elapsed: int):
+        if card := self.task_list.get_card_by_name(name):
+            card.set_status(CardStatus.DONE, format_duration(elapsed))
+        history.add_record(name, RunResult.SUCCESS, elapsed)
 
-    def _on_task_failed(self, index, name, reason):
-        for card in self.task_list.get_cards():
-            if card.task.name == name:
-                card.set_status("error")
-        history.add_record(name, "failed", 0)
+    def _on_task_failed(self, _index: int, name: str, reason: str):
+        if card := self.task_list.get_card_by_name(name):
+            card.set_status(CardStatus.ERROR)
+        history.add_record(name, RunResult.FAILED, 0)
 
     def _on_all_done(self):
         self.start_btn.setEnabled(True)
@@ -186,11 +187,7 @@ class LauncherInterface(QWidget):
         self.status_label.setText("全部完成 ✓")
         InfoBar.success("完成", "所有任务已运行完毕",
                         parent=self, position=InfoBarPosition.TOP)
-        # Windows 系统通知（通过托盘图标）
-        tray = self.window().tray_icon if hasattr(self.window(), "tray_icon") else None
-        if tray and tray.isVisible():
-            tray.showMessage("Game Launcher", "所有任务已完成 ✓",
-                             QSystemTrayIcon.MessageIcon.Information, 3000)
+        self.notify.emit("Game Launcher", "所有任务已完成 ✓")
 
     def _append_log(self, text: str):
         now = datetime.datetime.now().strftime("%H:%M:%S")
@@ -202,6 +199,13 @@ class LauncherInterface(QWidget):
 # 历史记录界面
 # ─────────────────────────────────────────────────────────────
 class HistoryInterface(QWidget):
+    STATUS_TEXT = {
+        RunResult.SUCCESS: "成功",
+        RunResult.FAILED:  "失败",
+        RunResult.TIMEOUT: "超时",
+        RunResult.STOPPED: "已停止",
+    }
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("historyInterface")
@@ -237,16 +241,14 @@ class HistoryInterface(QWidget):
     def refresh(self):
         records = history.get_records()
         self.table.setRowCount(len(records))
-        status_text = {"success": "成功", "failed": "失败",
-                       "timeout": "超时", "stopped": "已停止"}
         for row, rec in enumerate(records):
+            status_key = rec.get("status", "")
+            status_label = self.STATUS_TEXT.get(status_key, status_key)
+            secs = rec.get("duration", 0)
             self.table.setItem(row, 0, QTableWidgetItem(rec.get("time", "")))
             self.table.setItem(row, 1, QTableWidgetItem(rec.get("task", "")))
-            self.table.setItem(row, 2, QTableWidgetItem(
-                status_text.get(rec.get("status", ""), rec.get("status", ""))
-            ))
-            secs = rec.get("duration", 0)
-            self.table.setItem(row, 3, QTableWidgetItem(_format_duration(secs)))
+            self.table.setItem(row, 2, QTableWidgetItem(status_label))
+            self.table.setItem(row, 3, QTableWidgetItem(format_duration(secs)))
 
 
 # ─────────────────────────────────────────────────────────────
@@ -262,6 +264,7 @@ class MainWindow(FluentWindow):
 
     def _setup_interfaces(self):
         self.launcher = LauncherInterface()
+        self.launcher.notify.connect(self._show_tray_message)   # 解耦托盘通知
         self.addSubInterface(
             self.launcher, FluentIcon.PLAY, "启动器",
             NavigationItemPosition.TOP,
@@ -275,7 +278,6 @@ class MainWindow(FluentWindow):
 
     def _setup_tray(self):
         self.tray_icon = QSystemTrayIcon(self)
-        # 使用内置图标（打包后可替换为自定义 ico）
         self.tray_icon.setIcon(self.style().standardIcon(
             self.style().StandardPixmap.SP_ComputerIcon
         ))
@@ -291,19 +293,21 @@ class MainWindow(FluentWindow):
         self.tray_icon.activated.connect(self._on_tray_activated)
         self.tray_icon.show()
 
+    def _show_tray_message(self, title: str, message: str):
+        if self.tray_icon.isVisible():
+            self.tray_icon.showMessage(
+                title, message, QSystemTrayIcon.MessageIcon.Information, 3000
+            )
+
     def _on_tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self.show()
             self.raise_()
 
     def closeEvent(self, event):
-        # 关闭窗口时最小化到托盘而非退出
         event.ignore()
         self.hide()
-        self.tray_icon.showMessage(
-            "Game Launcher", "程序已最小化到托盘，双击图标可重新打开",
-            QSystemTrayIcon.MessageIcon.Information, 2000,
-        )
+        self._show_tray_message("Game Launcher", "程序已最小化到托盘，双击图标可重新打开")
 
     def _quit(self):
         self.tray_icon.hide()
@@ -311,4 +315,4 @@ class MainWindow(FluentWindow):
             self.launcher.runner.stop()
             self.launcher.runner.wait(3000)
         self.launcher.scheduler.shutdown()
-        import sys; sys.exit(0)
+        sys.exit(0)

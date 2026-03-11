@@ -1,21 +1,27 @@
 import os
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QFileDialog
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal, QTimer
 from qfluentwidgets import (
     CardWidget, LineEdit, PushButton, BodyLabel, CaptionLabel,
-    SpinBox, SwitchButton, ToolButton, FluentIcon, StrongBodyLabel,
+    SpinBox, SwitchButton, ToolButton, FluentIcon,
 )
+from core.enums import CardStatus
 
 
 class TaskCard(CardWidget):
     changed = Signal()
-    remove_requested = Signal(object)   # 请求删除自身
-    move_up_requested = Signal(object)  # 请求上移
-    move_down_requested = Signal(object)  # 请求下移
+    remove_requested = Signal(object)
+    move_up_requested = Signal(object)
+    move_down_requested = Signal(object)
 
     def __init__(self, task_config, parent=None):
         super().__init__(parent)
         self.task = task_config
+        # 防抖定时器：路径验证 300ms 后触发，避免每次按键都调用 isfile
+        self._path_timer = QTimer(self)
+        self._path_timer.setSingleShot(True)
+        self._path_timer.setInterval(300)
+        self._path_timer.timeout.connect(self._validate_path)
         self._setup_ui()
         self._load_from_config()
 
@@ -25,16 +31,14 @@ class TaskCard(CardWidget):
         root.setContentsMargins(16, 10, 16, 10)
         root.setSpacing(8)
 
-        # --- 顶部行：序号标记 + 名称 + 状态 + 上下移 + 删除 ---
+        # 顶部行
         top = QHBoxLayout()
-
         self.name_edit = LineEdit()
         self.name_edit.setPlaceholderText("任务名称")
         self.name_edit.setFixedWidth(160)
         self.name_edit.textChanged.connect(self._on_changed)
 
         self.status_label = CaptionLabel("等待中")
-
         self.enable_switch = SwitchButton()
         self.enable_switch.checkedChanged.connect(self._on_changed)
 
@@ -62,7 +66,7 @@ class TaskCard(CardWidget):
         top.addWidget(down_btn)
         top.addWidget(del_btn)
 
-        # --- 路径行 ---
+        # 路径行
         path_row = QHBoxLayout()
         self.path_edit = LineEdit()
         self.path_edit.setPlaceholderText("程序路径（.exe）")
@@ -76,15 +80,13 @@ class TaskCard(CardWidget):
         path_row.addWidget(self.path_edit)
         path_row.addWidget(browse_btn)
 
-        # --- 超时 + 运行时间行 ---
+        # 超时 + 运行时间行
         bottom = QHBoxLayout()
-
         self.timeout_spin = SpinBox()
         self.timeout_spin.setRange(0, 86400)
         self.timeout_spin.setSuffix(" 秒  (0=不限制)")
         self.timeout_spin.setFixedWidth(210)
         self.timeout_spin.valueChanged.connect(self._on_changed)
-
         self.elapsed_label = CaptionLabel("运行时间: --")
 
         bottom.addWidget(BodyLabel("超时:"))
@@ -110,14 +112,14 @@ class TaskCard(CardWidget):
 
     def _on_path_changed(self, text):
         self.task.exe_path = text
-        if text:
-            self.task.process_name = os.path.basename(text)
-        # 路径有效性提示
-        if text and not os.path.isfile(text):
-            self.path_edit.setStyleSheet("border: 1px solid #e74c3c;")
-        else:
-            self.path_edit.setStyleSheet("")
+        self.task.process_name = os.path.basename(text) if text else ""
+        self._path_timer.start()   # 防抖：300ms 后验证
         self.changed.emit()
+
+    def _validate_path(self):
+        text = self.task.exe_path
+        invalid = bool(text) and not os.path.isfile(text)
+        self.path_edit.setStyleSheet("border: 1px solid #e74c3c;" if invalid else "")
 
     def _browse(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -126,19 +128,19 @@ class TaskCard(CardWidget):
         if path:
             self.path_edit.setText(path)
 
-    def set_status(self, status: str, elapsed_text: str = ""):
+    def set_status(self, status: CardStatus | str, elapsed_text: str = ""):
         color_map = {
-            "idle":    ("等待中", ""),
-            "running": ("运行中 ●", "#2ecc71"),
-            "done":    ("已完成 ✓", "#3498db"),
-            "error":   ("出错 ✗",  "#e74c3c"),
+            CardStatus.IDLE:    ("等待中",    ""),
+            CardStatus.RUNNING: ("运行中 ●", "#2ecc71"),
+            CardStatus.DONE:    ("已完成 ✓", "#3498db"),
+            CardStatus.ERROR:   ("出错 ✗",   "#e74c3c"),
         }
-        text, color = color_map.get(status, ("等待中", ""))
+        text, color = color_map.get(CardStatus(status), ("等待中", ""))
         self.status_label.setText(text)
         self.status_label.setStyleSheet(
             f"color: {color}; font-weight: bold;" if color else ""
         )
         if elapsed_text:
             self.elapsed_label.setText(f"运行时间: {elapsed_text}")
-        elif status == "idle":
+        elif status == CardStatus.IDLE:
             self.elapsed_label.setText("运行时间: --")

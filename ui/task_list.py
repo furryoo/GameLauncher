@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QFrame
+from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtCore import Signal
 from qfluentwidgets import PrimaryPushButton, FluentIcon
 
@@ -21,27 +21,15 @@ class DraggableTaskList(QWidget):
         add_btn = PrimaryPushButton(FluentIcon.ADD, "添加任务")
         add_btn.clicked.connect(lambda: self.add_task())
         self._layout.addWidget(add_btn)
-
         self._layout.addStretch()
 
     # ── 内部工具 ────────────────────────────────────────────
 
-    def _insert_card(self, card: TaskCard, index: int):
-        """将卡片插入布局的指定位置（0-based，不含底部 add_btn + stretch）"""
+    def _connect_card(self, card: TaskCard):
         card.changed.connect(self.changed)
         card.remove_requested.connect(self.remove_card)
         card.move_up_requested.connect(self._move_up)
         card.move_down_requested.connect(self._move_down)
-        self._cards.insert(index, card)
-        # 布局顺序：[card0, card1, ..., add_btn, stretch]
-        self._layout.insertWidget(index, card)
-
-    def _rebuild_layout(self):
-        """把所有卡片按 _cards 列表顺序重新放入布局"""
-        for card in self._cards:
-            self._layout.removeWidget(card)
-        for i, card in enumerate(self._cards):
-            self._layout.insertWidget(i, card)
 
     # ── 公开 API ─────────────────────────────────────────────
 
@@ -49,7 +37,10 @@ class DraggableTaskList(QWidget):
         if config is None:
             config = TaskConfig(name=f"任务 {len(self._cards) + 1}")
         card = TaskCard(config)
-        self._insert_card(card, len(self._cards))
+        self._connect_card(card)
+        idx = len(self._cards)
+        self._cards.append(card)
+        self._layout.insertWidget(idx, card)
         self.changed.emit()
         return card
 
@@ -64,14 +55,14 @@ class DraggableTaskList(QWidget):
         i = self._cards.index(card)
         if i > 0:
             self._cards[i], self._cards[i - 1] = self._cards[i - 1], self._cards[i]
-            self._rebuild_layout()
+            self._layout.insertWidget(i - 1, card)   # Qt 自动从旧位置移除再插入
             self.changed.emit()
 
     def _move_down(self, card: TaskCard):
         i = self._cards.index(card)
         if i < len(self._cards) - 1:
             self._cards[i], self._cards[i + 1] = self._cards[i + 1], self._cards[i]
-            self._rebuild_layout()
+            self._layout.insertWidget(i + 1, card)
             self.changed.emit()
 
     def load_tasks(self, task_configs: list[TaskConfig]):
@@ -85,6 +76,9 @@ class DraggableTaskList(QWidget):
 
     def get_cards(self) -> list[TaskCard]:
         return list(self._cards)
+
+    def get_card_by_name(self, name: str) -> TaskCard | None:
+        return next((c for c in self._cards if c.task.name == name), None)
 
     def reset_all_status(self):
         for card in self._cards:
