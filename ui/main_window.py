@@ -23,6 +23,8 @@ from core.scheduler import AppScheduler
 from core import history
 from ui.task_list import DraggableTaskList
 
+_POST_ACTIONS = [PostAction.NONE, PostAction.SHUTDOWN, PostAction.HIBERNATE]
+
 
 # ─────────────────────────────────────────────────────────────
 # 启动器主界面
@@ -122,8 +124,8 @@ class LauncherInterface(QWidget):
         if sched.time:
             h, m = map(int, sched.time.split(":"))
             self.time_edit.setTime(QTime(h, m))
-        _action_index = {PostAction.NONE: 0, PostAction.SHUTDOWN: 1, PostAction.HIBERNATE: 2}
-        self.post_action_combo.setCurrentIndex(_action_index.get(sched.post_action, 0))
+        idx = _POST_ACTIONS.index(sched.post_action) if sched.post_action in _POST_ACTIONS else 0
+        self.post_action_combo.setCurrentIndex(idx)
         self._apply_schedule()
 
     def _auto_save(self):
@@ -133,8 +135,7 @@ class LauncherInterface(QWidget):
     def _on_schedule_changed(self):
         self.config.schedule.enabled = self.sched_switch.isChecked()
         self.config.schedule.time = self.time_edit.time().toString("HH:mm")
-        _index_action = [PostAction.NONE, PostAction.SHUTDOWN, PostAction.HIBERNATE]
-        self.config.schedule.post_action = _index_action[self.post_action_combo.currentIndex()]
+        self.config.schedule.post_action = _POST_ACTIONS[self.post_action_combo.currentIndex()]
         save_config(self.config)
         self._apply_schedule()
 
@@ -154,6 +155,13 @@ class LauncherInterface(QWidget):
             return
         if self.runner and self.runner.isRunning():
             return
+
+        if self.runner:
+            self.runner.log_signal.disconnect()
+            self.runner.task_started.disconnect()
+            self.runner.task_finished.disconnect()
+            self.runner.task_failed.disconnect()
+            self.runner.all_done.disconnect()
 
         self.task_list.reset_all_status()
         self.runner = TaskRunner(tasks, post_action=self.config.schedule.post_action)

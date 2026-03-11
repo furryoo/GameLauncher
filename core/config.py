@@ -32,10 +32,10 @@ class AppConfig:
     schedule: ScheduleConfig = field(default_factory=ScheduleConfig)
 
 
-def _task_from_dict(d: dict) -> TaskConfig:
-    """兼容旧版配置：忽略未知字段"""
-    valid = {f.name for f in TaskConfig.__dataclass_fields__.values()}
-    return TaskConfig(**{k: v for k, v in d.items() if k in valid})
+def _filter_fields(d: dict, cls) -> dict:
+    """过滤字典，只保留 dataclass 中存在的字段（兼容旧版配置）"""
+    valid = cls.__dataclass_fields__
+    return {k: v for k, v in d.items() if k in valid}
 
 
 def load_config() -> AppConfig:
@@ -43,11 +43,8 @@ def load_config() -> AppConfig:
         return AppConfig()
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
-    tasks = [_task_from_dict(t) for t in data.get("tasks", [])]
-    sched_data = data.get("schedule", {})
-    # 兼容旧版：过滤未知字段
-    valid_sched = {f for f in ScheduleConfig.__dataclass_fields__}
-    schedule = ScheduleConfig(**{k: v for k, v in sched_data.items() if k in valid_sched})
+    tasks = [TaskConfig(**_filter_fields(t, TaskConfig)) for t in data.get("tasks", [])]
+    schedule = ScheduleConfig(**_filter_fields(data.get("schedule", {}), ScheduleConfig))
     return AppConfig(tasks=tasks, schedule=schedule)
 
 
