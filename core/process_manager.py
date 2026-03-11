@@ -61,6 +61,13 @@ class TaskRunner(QThread):
                 self.task_failed.emit(i, task.name, reason)
                 continue
 
+            # ── 冲突检查：目标进程已在运行则跳过 ─────────────────
+            proc_name = os.path.basename(task.exe_path).lower()
+            if any(p.name().lower() == proc_name
+                   for p in psutil.process_iter(["name"])):
+                self.log_signal.emit(f"⚠ {task.name} 进程已在运行，跳过")
+                continue
+
             # ── 启动前延迟 ──────────────────────────────────────
             if task.delay_seconds > 0:
                 self.log_signal.emit(

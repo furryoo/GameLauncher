@@ -20,7 +20,7 @@ from core.enums import CardStatus, RunResult, PostAction
 from core.utils import format_duration
 from core.process_manager import TaskRunner, execute_post_action
 from core.scheduler import AppScheduler
-from core import history
+from core import history, logger
 from ui.task_list import DraggableTaskList
 
 _POST_ACTIONS = [PostAction.NONE, PostAction.SHUTDOWN, PostAction.HIBERNATE]
@@ -37,6 +37,7 @@ class LauncherInterface(QWidget):
         self.setObjectName("launcherInterface")
         self.config = load_config()
         self.runner: TaskRunner | None = None
+        self._log_file = None
         self._setup_ui()
         self._setup_scheduler()
         self._load_config_to_ui()
@@ -102,6 +103,9 @@ class LauncherInterface(QWidget):
         log_header = QHBoxLayout()
         log_header.addWidget(StrongBodyLabel("运行日志"))
         log_header.addStretch()
+        open_log_btn = PushButton(FluentIcon.FOLDER, "日志文件夹")
+        open_log_btn.clicked.connect(logger.open_logs_dir)
+        log_header.addWidget(open_log_btn)
         clear_btn = PushButton("清空")
         clear_btn.setFixedWidth(64)
         clear_btn.clicked.connect(lambda: self.log_edit.clear())
@@ -163,6 +167,11 @@ class LauncherInterface(QWidget):
             self.runner.task_failed.disconnect()
             self.runner.all_done.disconnect()
 
+        if self._log_file:
+            self._log_file.close()
+        self._log_file = open(logger.new_log_path(), "w", encoding="utf-8")
+        logger.cleanup_old_logs()
+
         self.task_list.reset_all_status()
         self.runner = TaskRunner(tasks, post_action=self.config.schedule.post_action)
         self.runner.log_signal.connect(self._append_log)
@@ -210,8 +219,15 @@ class LauncherInterface(QWidget):
 
     def _append_log(self, text: str):
         now = datetime.datetime.now().strftime("%H:%M:%S")
-        self.log_edit.appendPlainText(f"[{now}] {text}")
+        line = f"[{now}] {text}"
+        self.log_edit.appendPlainText(line)
         self.log_edit.ensureCursorVisible()
+        if self._log_file:
+            try:
+                self._log_file.write(line + "\n")
+                self._log_file.flush()
+            except OSError:
+                pass
 
 
 # ─────────────────────────────────────────────────────────────
@@ -334,4 +350,6 @@ class MainWindow(FluentWindow):
             self.launcher.runner.stop()
             self.launcher.runner.wait(3000)
         self.launcher.scheduler.shutdown()
+        if self.launcher._log_file:
+            self.launcher._log_file.close()
         QApplication.instance().quit()
