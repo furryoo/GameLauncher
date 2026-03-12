@@ -3,10 +3,13 @@ from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QFileDialog
 from PySide6.QtCore import Signal, QTimer
 from qfluentwidgets import (
     CardWidget, LineEdit, PushButton, BodyLabel, CaptionLabel,
-    SpinBox, SwitchButton, ToolButton, FluentIcon,
+    SpinBox, SwitchButton, ToolButton, FluentIcon, ComboBox,
 )
-from core.enums import CardStatus
+from core.enums import CardStatus, RunIf
 from ui.theme import COLOR_SUCCESS, COLOR_INFO, COLOR_ERROR
+
+_RUN_IF_OPTIONS = [RunIf.ALWAYS, RunIf.PREV_SUCCESS, RunIf.PREV_FAIL]
+_RUN_IF_LABELS  = ["总是运行", "前置成功才运行", "前置失败才运行"]
 
 
 class TaskCard(CardWidget):
@@ -27,7 +30,7 @@ class TaskCard(CardWidget):
         self._load_from_config()
 
     def _setup_ui(self):
-        self.setFixedHeight(210)
+        self.setFixedHeight(225)
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 10, 16, 10)
         root.setSpacing(6)
@@ -122,10 +125,22 @@ class TaskCard(CardWidget):
         extra_row.addWidget(self.delay_spin)
         extra_row.addStretch()
 
+        # ── 前置条件行 ──
+        cond_row = QHBoxLayout()
+        self.run_if_combo = ComboBox()
+        self.run_if_combo.addItems(_RUN_IF_LABELS)
+        self.run_if_combo.setFixedWidth(140)
+        self.run_if_combo.setToolTip("本任务的前置运行条件（基于上一个任务的结果）")
+        self.run_if_combo.currentIndexChanged.connect(self._on_changed)
+        cond_row.addWidget(BodyLabel("前置条件:"))
+        cond_row.addWidget(self.run_if_combo)
+        cond_row.addStretch()
+
         root.addLayout(top)
         root.addLayout(path_row)
         root.addLayout(timeout_row)
         root.addLayout(extra_row)
+        root.addLayout(cond_row)
 
     def _load_from_config(self):
         self.name_edit.setText(self.task.name)
@@ -134,6 +149,11 @@ class TaskCard(CardWidget):
         self.enable_switch.setChecked(self.task.enabled)
         self.retry_spin.setValue(self.task.retry_count)
         self.delay_spin.setValue(self.task.delay_seconds)
+        try:
+            idx = _RUN_IF_OPTIONS.index(RunIf(self.task.run_if))
+        except (ValueError, KeyError):
+            idx = 0
+        self.run_if_combo.setCurrentIndex(idx)
 
     def _on_changed(self):
         self.task.name          = self.name_edit.text()
@@ -141,6 +161,7 @@ class TaskCard(CardWidget):
         self.task.enabled       = self.enable_switch.isChecked()
         self.task.retry_count   = self.retry_spin.value()
         self.task.delay_seconds = self.delay_spin.value()
+        self.task.run_if        = _RUN_IF_OPTIONS[self.run_if_combo.currentIndex()]
         self.changed.emit()
 
     def _on_path_changed(self, text):

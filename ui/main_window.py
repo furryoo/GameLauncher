@@ -1,22 +1,24 @@
+import json
 import os
 import datetime
+from collections import defaultdict
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame,
-    QSystemTrayIcon, QMenu, QApplication,
+    QSystemTrayIcon, QMenu, QApplication, QInputDialog, QFileDialog,
 )
-from PySide6.QtCore import QTime, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QTime, Signal, Qt
+from PySide6.QtGui import QAction, QPainter, QColor, QFont
 from qfluentwidgets import (
     FluentWindow, NavigationItemPosition, FluentIcon,
     PrimaryPushButton, PushButton, BodyLabel, StrongBodyLabel,
     CaptionLabel, CardWidget, SwitchButton, TimeEdit,
     PlainTextEdit, SubtitleLabel, InfoBar, InfoBarPosition,
     SmoothScrollArea, TableWidget, HeaderView, ComboBox, CheckBox, LineEdit,
-    MessageBox,
+    MessageBox, ToolButton,
 )
 from PySide6.QtWidgets import QTableWidgetItem
 
-from core.config import load_config, save_config
+from core.config import TaskConfig, load_config, save_config, _filter_fields
 from core.enums import CardStatus, RunResult, PostAction
 from core.utils import format_duration
 from core.process_manager import TaskRunner, execute_post_action
@@ -26,6 +28,73 @@ from ui.task_list import DraggableTaskList
 from ui.version_view import VersionInterface
 
 _POST_ACTIONS = [PostAction.NONE, PostAction.SHUTDOWN, PostAction.HIBERNATE]
+
+
+# ─────────────────────────────────────────────────────────────
+# 每日统计柱状图
+# ─────────────────────────────────────────────────────────────
+class DailyBarChart(QWidget):
+    """过去 N 天每日运行总时长柱状图（QPainter 实现，无额外依赖）"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(140)
+        self._data: list[tuple[str, int]] = []  # [(MM-DD, seconds)]
+
+    def set_data(self, data: list[tuple[str, int]]):
+        self._data = data
+        self.update()
+
+    def paintEvent(self, event):
+        if not self._data:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        w, h = self.width(), self.height()
+        margin_l, margin_r, margin_t, margin_b = 48, 12, 8, 28
+        chart_w = w - margin_l - margin_r
+        chart_h = h - margin_t - margin_b
+
+        max_val = max(v for _, v in self._data) or 1
+        n = len(self._data)
+        slot_w = chart_w // n
+        bar_w = max(6, slot_w - 6)
+
+        bar_color   = QColor("#0078d4")
+        axis_color  = QColor("#888888")
+        label_color = QColor("#555555")
+
+        font = QFont()
+        font.setPointSize(7)
+        painter.setFont(font)
+        painter.setPen(axis_color)
+
+        # 坐标轴
+        painter.drawLine(margin_l, margin_t, margin_l, margin_t + chart_h)
+        painter.drawLine(margin_l, margin_t + chart_h,
+                         margin_l + chart_w, margin_t + chart_h)
+
+        # Y 轴刻度（最大值）
+        painter.setPen(label_color)
+        max_label = format_duration(max_val)
+        painter.drawText(0, margin_t + 8, margin_l - 4, 16,
+                         Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                         max_label)
+
+        for i, (label, val) in enumerate(self._data):
+            x = margin_l + i * slot_w + (slot_w - bar_w) // 2
+            bar_h = int(val / max_val * (chart_h - 4))
+            y = margin_t + chart_h - bar_h
+
+            painter.fillRect(x, y, bar_w, bar_h, bar_color)
+
+            # X 轴日期标签
+            painter.setPen(label_color)
+            painter.drawText(x - 4, margin_t + chart_h + 4, bar_w + 8, 20,
+                             Qt.AlignmentFlag.AlignHCenter, label)
+
+        painter.end()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -49,7 +118,7 @@ class LauncherInterface(QWidget):
         root.setContentsMargins(24, 16, 24, 16)
         root.setSpacing(16)
 
-        # 标题 + 状态
+        # ── 标题行 ──
         title_row = QHBoxLayout()
         title_row.addWidget(SubtitleLabel("Game Automation Launcher"))
         title_row.addStretch()
@@ -57,7 +126,47 @@ class LauncherInterface(QWidget):
         title_row.addWidget(self.status_label)
         root.addLayout(title_row)
 
-        # 任务列表
+        # ── 场景（Profile）行 ──
+        profile_card = CardWidget()
+        profile_layout = QHBoxLayout(profile_card)
+        profile_layout.setContentsMargins(16, 8, 16, 8)
+        profile_layout.setSpacing(8)
+
+        profile_layout.addWidget(BodyLabel("场景:"))
+        self.profile_combo = ComboBox()
+        self.profile_combo.setMinimumWidth(120)
+        self.profile_combo.currentTextChanged.connect(self._on_profile_changed)
+        profile_layout.addWidget(self.profile_combo)
+
+        add_profile_btn = ToolButton(FluentIcon.ADD)
+        add_profile_btn.setFixedSize(28, 28)
+        add_profile_btn.setToolTip("新建场景")
+        add_profile_btn.clicked.connect(self._add_profile)
+        profile_layout.addWidget(add_profile_btn)
+
+        del_profile_btn = ToolButton(FluentIcon.DELETE)
+        del_profile_btn.setFixedSize(28, 28)
+        del_profile_btn.setToolTip("删除当前场景")
+        del_profile_btn.clicked.connect(self._delete_profile)
+        profile_layout.addWidget(del_profile_btn)
+
+        profile_layout.addStretch()
+
+        export_btn = PushButton(FluentIcon.SHARE, "导出")
+        export_btn.setFixedWidth(72)
+        export_btn.setToolTip("导出配置为 JSON 文件")
+        export_btn.clicked.connect(self._export_config)
+        profile_layout.addWidget(export_btn)
+
+        import_btn = PushButton(FluentIcon.DOWNLOAD, "导入")
+        import_btn.setFixedWidth(72)
+        import_btn.setToolTip("从 JSON 文件导入配置")
+        import_btn.clicked.connect(self._import_config)
+        profile_layout.addWidget(import_btn)
+
+        root.addWidget(profile_card)
+
+        # ── 任务列表 ──
         scroll = SmoothScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -67,13 +176,12 @@ class LauncherInterface(QWidget):
         scroll.setMinimumHeight(280)
         root.addWidget(scroll, stretch=1)
 
-        # 调度 + 控制按钮
+        # ── 调度 + 控制按钮 ──
         sched_card = CardWidget()
         sched_vbox = QVBoxLayout(sched_card)
         sched_vbox.setContentsMargins(16, 12, 16, 12)
         sched_vbox.setSpacing(8)
 
-        # 第一行：开关 / 时间 / 完成后 / 按钮
         row1 = QHBoxLayout()
         row1.setSpacing(10)
         row1.addWidget(BodyLabel("定时启动:"))
@@ -102,7 +210,6 @@ class LauncherInterface(QWidget):
         row1.addWidget(self.start_btn)
         row1.addWidget(self.stop_btn)
 
-        # 第二行：星期选择
         row2 = QHBoxLayout()
         row2.setSpacing(4)
         row2.addWidget(CaptionLabel("重复:"))
@@ -119,7 +226,7 @@ class LauncherInterface(QWidget):
         sched_vbox.addLayout(row2)
         root.addWidget(sched_card)
 
-        # 通知设置
+        # ── 通知设置 ──
         notify_card = CardWidget()
         notify_layout = QHBoxLayout(notify_card)
         notify_layout.setContentsMargins(16, 10, 16, 10)
@@ -131,7 +238,7 @@ class LauncherInterface(QWidget):
         notify_layout.addWidget(self.bark_edit)
         root.addWidget(notify_card)
 
-        # 日志面板
+        # ── 日志面板 ──
         log_header = QHBoxLayout()
         log_header.addWidget(StrongBodyLabel("运行日志"))
         log_header.addStretch()
@@ -154,7 +261,19 @@ class LauncherInterface(QWidget):
         self.scheduler = AppScheduler(callback=self.start_runner, parent=self)
 
     def _load_config_to_ui(self):
-        self.task_list.load_tasks(self.config.tasks)
+        # ── 场景列表 ──
+        self.profile_combo.blockSignals(True)
+        self.profile_combo.clear()
+        for name in self.config.profiles:
+            self.profile_combo.addItem(name)
+        self.profile_combo.setCurrentText(self.config.active_profile)
+        self.profile_combo.blockSignals(False)
+
+        self.task_list.load_tasks(
+            self.config.profiles.get(self.config.active_profile, [])
+        )
+
+        # ── 调度设置 ──
         sched = self.config.schedule
         self.sched_switch.setChecked(sched.enabled)
         if sched.time:
@@ -167,8 +286,107 @@ class LauncherInterface(QWidget):
         self.bark_edit.setText(self.config.notify.bark_url)
         self._apply_schedule()
 
+    # ── 场景管理 ──────────────────────────────────────────────
+
+    def _on_profile_changed(self, new_name: str):
+        if not new_name or new_name == self.config.active_profile:
+            return
+        # 保存当前场景任务
+        self.config.profiles[self.config.active_profile] = self.task_list.get_tasks()
+        self.config.active_profile = new_name
+        self.task_list.load_tasks(self.config.profiles.get(new_name, []))
+        save_config(self.config)
+
+    def _add_profile(self):
+        name, ok = QInputDialog.getText(self, "新建场景", "场景名称:")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        if name in self.config.profiles:
+            InfoBar.warning("提示", f"场景 '{name}' 已存在",
+                            parent=self, position=InfoBarPosition.TOP)
+            return
+        self.config.profiles[name] = []
+        self.profile_combo.blockSignals(True)
+        self.profile_combo.addItem(name)
+        self.profile_combo.blockSignals(False)
+        # 保存当前场景再切换
+        self.config.profiles[self.config.active_profile] = self.task_list.get_tasks()
+        self.config.active_profile = name
+        self.profile_combo.setCurrentText(name)
+        self.task_list.load_tasks([])
+        save_config(self.config)
+
+    def _delete_profile(self):
+        if len(self.config.profiles) <= 1:
+            InfoBar.warning("提示", "至少保留一个场景",
+                            parent=self, position=InfoBarPosition.TOP)
+            return
+        current = self.config.active_profile
+        box = MessageBox("确认删除", f"删除场景 '{current}'？此操作不可撤销。", self)
+        if not box.exec():
+            return
+        del self.config.profiles[current]
+        self.profile_combo.blockSignals(True)
+        idx = self.profile_combo.findText(current)
+        self.profile_combo.removeItem(idx)
+        self.profile_combo.blockSignals(False)
+        self.config.active_profile = self.profile_combo.currentText()
+        self.task_list.load_tasks(self.config.profiles[self.config.active_profile])
+        save_config(self.config)
+
+    # ── 导入 / 导出 ───────────────────────────────────────────
+
+    def _export_config(self):
+        from dataclasses import asdict
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出配置", "game_launcher_config.json", "JSON (*.json)"
+        )
+        if not path:
+            return
+        data = {
+            "profiles": {
+                name: [asdict(t) for t in tasks]
+                for name, tasks in self.config.profiles.items()
+            },
+            "active_profile": self.config.active_profile,
+            "schedule": asdict(self.config.schedule),
+            "notify": asdict(self.config.notify),
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        InfoBar.success("成功", "配置已导出", parent=self, position=InfoBarPosition.TOP)
+
+    def _import_config(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "导入配置", "", "JSON (*.json)"
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            raw_profiles = data.get("profiles", {})
+            profiles = {
+                name: [TaskConfig(**_filter_fields(t, TaskConfig)) for t in (ptasks or [])]
+                for name, ptasks in raw_profiles.items()
+            }
+            if not profiles:
+                profiles = {"默认": []}
+            self.config.profiles = profiles
+            self.config.active_profile = data.get("active_profile", next(iter(profiles)))
+            if self.config.active_profile not in profiles:
+                self.config.active_profile = next(iter(profiles))
+            self._load_config_to_ui()
+            save_config(self.config)
+            InfoBar.success("成功", "配置已导入", parent=self, position=InfoBarPosition.TOP)
+        except Exception as e:
+            InfoBar.error("导入失败", str(e), parent=self, position=InfoBarPosition.TOP)
+
+    # ── 自动保存 & 调度 ───────────────────────────────────────
+
     def _auto_save(self):
-        self.config.tasks = self.task_list.get_tasks()
+        self.config.profiles[self.config.active_profile] = self.task_list.get_tasks()
         save_config(self.config)
 
     def _on_schedule_changed(self):
@@ -201,7 +419,7 @@ class LauncherInterface(QWidget):
         if self.runner and self.runner.isRunning():
             return
 
-        # ── 启动前预览确认 ───────────────────────────────────
+        # ── 启动前预览确认 ──
         task_names = "\n".join(f"  • {t.name}" for t in tasks)
         box = MessageBox("确认启动", f"即将运行以下 {len(tasks)} 个任务：\n\n{task_names}", self)
         if not box.exec():
@@ -256,7 +474,8 @@ class LauncherInterface(QWidget):
         if card:
             card.set_status(CardStatus.ERROR)
             history.add_record(card.task.name, RunResult.FAILED, 0)
-            notifier.send_bark(self.config.notify.bark_url, "任务失败", f"{card.task.name}：{reason}")
+            notifier.send_bark(self.config.notify.bark_url, "任务失败",
+                               f"{card.task.name}：{reason}")
 
     def _on_all_done(self, post_action: str):
         self.start_btn.setEnabled(True)
@@ -295,7 +514,6 @@ class HistoryInterface(QWidget):
         RunResult.TIMEOUT: "超时",
         RunResult.STOPPED: "已停止",
     }
-    # 过滤下拉选项 → 对应 RunResult 值（None 表示全部）
     _FILTER_OPTIONS = [("全部", None), ("成功", RunResult.SUCCESS),
                        ("失败", RunResult.FAILED), ("超时", RunResult.TIMEOUT),
                        ("已停止", RunResult.STOPPED)]
@@ -311,22 +529,31 @@ class HistoryInterface(QWidget):
         root.setContentsMargins(24, 16, 24, 16)
         root.setSpacing(12)
 
+        # ── 顶部工具栏 ──
         header = QHBoxLayout()
         header.addWidget(SubtitleLabel("运行历史"))
         header.addStretch()
-
-        # 状态筛选
         header.addWidget(CaptionLabel("筛选:"))
         self.filter_combo = ComboBox()
         self.filter_combo.addItems([label for label, _ in self._FILTER_OPTIONS])
         self.filter_combo.currentIndexChanged.connect(self._apply_filter)
         header.addWidget(self.filter_combo)
-
         refresh_btn = PushButton(FluentIcon.SYNC, "刷新")
         refresh_btn.clicked.connect(self.refresh)
         header.addWidget(refresh_btn)
         root.addLayout(header)
 
+        # ── 每日运行时长图表 ──
+        chart_card = CardWidget()
+        chart_layout = QVBoxLayout(chart_card)
+        chart_layout.setContentsMargins(12, 8, 12, 8)
+        chart_layout.setSpacing(4)
+        chart_layout.addWidget(CaptionLabel("最近 14 天每日运行时长"))
+        self.bar_chart = DailyBarChart()
+        chart_layout.addWidget(self.bar_chart)
+        root.addWidget(chart_card)
+
+        # ── 历史表格 ──
         self.table = TableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["时间", "任务", "状态", "时长"])
@@ -344,7 +571,26 @@ class HistoryInterface(QWidget):
 
     def refresh(self):
         self._all_records = history.get_records()
+        self._update_chart()
         self._apply_filter()
+
+    def _update_chart(self):
+        """统计最近 14 天每日运行总时长"""
+        daily: dict[str, int] = defaultdict(int)
+        for rec in self._all_records:
+            date = rec.get("time", "")[:10]  # YYYY-MM-DD
+            if date:
+                daily[date] += rec.get("duration", 0)
+
+        today = datetime.date.today()
+        data = []
+        for i in range(13, -1, -1):
+            d = today - datetime.timedelta(days=i)
+            key = d.strftime("%Y-%m-%d")
+            label = d.strftime("%m/%d")
+            data.append((label, daily.get(key, 0)))
+
+        self.bar_chart.set_data(data)
 
     def _apply_filter(self):
         idx = self.filter_combo.currentIndex()
@@ -380,7 +626,7 @@ class MainWindow(FluentWindow):
 
     def _setup_interfaces(self):
         self.launcher = LauncherInterface()
-        self.launcher.notify.connect(self._show_tray_message)   # 解耦托盘通知
+        self.launcher.notify.connect(self._show_tray_message)
         self.addSubInterface(
             self.launcher, FluentIcon.PLAY, "启动器",
             NavigationItemPosition.TOP,

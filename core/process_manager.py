@@ -5,7 +5,7 @@ import time
 import psutil
 from PySide6.QtCore import QThread, Signal
 
-from core.enums import RunResult, PostAction
+from core.enums import RunResult, PostAction, RunIf
 from core.utils import format_duration
 from core.watchdog import ProcessWatchdog
 
@@ -52,6 +52,8 @@ class TaskRunner(QThread):
         self._stop_flag = True
 
     def run(self):
+        prev_result: RunResult | None = None  # 上一任务的运行结果
+
         for i, task in enumerate(self.tasks):
             if self._stop_flag:
                 self.log_signal.emit("已手动停止")
@@ -61,11 +63,21 @@ class TaskRunner(QThread):
                 self.log_signal.emit(f"跳过 {task.name}（已禁用）")
                 continue
 
+            # ── 前置条件检查 ────────────────────────────────────
+            if prev_result is not None and task.run_if != RunIf.ALWAYS:
+                if task.run_if == RunIf.PREV_SUCCESS and prev_result != RunResult.SUCCESS:
+                    self.log_signal.emit(f"⏭ 跳过 {task.name}（前置任务未成功）")
+                    continue
+                if task.run_if == RunIf.PREV_FAIL and prev_result == RunResult.SUCCESS:
+                    self.log_signal.emit(f"⏭ 跳过 {task.name}（前置任务已成功）")
+                    continue
+
             exe_path = os.path.expandvars(task.exe_path)
             if not os.path.isfile(exe_path):
                 reason = f"路径不存在: {task.exe_path}"
                 self.log_signal.emit(f"✗ {task.name} {reason}")
                 self.task_failed.emit(i, task.id, reason)
+                prev_result = RunResult.FAILED
                 continue
 
             # ── 冲突检查：目标进程已在运行则跳过 ─────────────────
@@ -124,6 +136,7 @@ class TaskRunner(QThread):
                 watchdog = ProcessWatchdog(proc.pid)
                 watchdog.start()
                 start_time = time.time()
+                last_monitor = start_time
                 timeout = task.timeout if task.timeout > 0 else None
                 abnormal = False
 
@@ -161,6 +174,20 @@ class TaskRunner(QThread):
                         abnormal = True
                         break
 
+                    # ── 进程资源监控（每 30s 采样一次）─────────────
+                    now = time.time()
+                    if now - last_monitor >= 30:
+                        try:
+                            p = psutil.Process(proc.pid)
+                            cpu = p.cpu_percent(interval=None)
+                            mem_mb = p.memory_info().rss / 1024 / 1024
+                            self.log_signal.emit(
+                                f"  📊 {task.name}  CPU {cpu:.1f}%  内存 {mem_mb:.0f} MB"
+                            )
+                        except psutil.NoSuchProcess:
+                            pass
+                        last_monitor = now
+
                 watchdog.stop()
                 elapsed = int(time.time() - start_time)
 
@@ -168,6 +195,7 @@ class TaskRunner(QThread):
                     duration = format_duration(elapsed)
                     self.log_signal.emit(f"✓ {task.name} 已完成（运行 {duration}）")
                     self.task_finished.emit(i, task.id, elapsed)
+                    prev_result = RunResult.SUCCESS
                     break  # 成功，不再重试
                 elif attempt < max_attempts - 1:
                     self.log_signal.emit(f"  将进行第 {attempt+1}/{task.retry_count} 次重试...")
@@ -176,6 +204,7 @@ class TaskRunner(QThread):
                     reason = "异常退出，重试耗尽" if task.retry_count > 0 else "异常退出"
                     self.log_signal.emit(f"✗ {task.name} {reason}")
                     self.task_failed.emit(i, task.id, reason)
+                    prev_result = RunResult.FAILED
 
         self.log_signal.emit("✅ 所有任务已完成")
         self.all_done.emit(self.post_action)
