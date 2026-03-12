@@ -18,6 +18,7 @@ class TaskCard(CardWidget):
     move_up_requested   = Signal(object)
     move_down_requested = Signal(object)
     clone_requested     = Signal(object)
+    run_requested       = Signal(object)
 
     def __init__(self, task_config, parent=None):
         super().__init__(parent)
@@ -30,7 +31,7 @@ class TaskCard(CardWidget):
         self._load_from_config()
 
     def _setup_ui(self):
-        self.setFixedHeight(225)
+        self.setFixedHeight(255)
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 10, 16, 10)
         root.setSpacing(6)
@@ -66,11 +67,17 @@ class TaskCard(CardWidget):
         del_btn.setFixedSize(28, 28)
         del_btn.clicked.connect(lambda: self.remove_requested.emit(self))
 
+        self.run_btn = ToolButton(FluentIcon.PLAY)
+        self.run_btn.setToolTip("单独运行此任务")
+        self.run_btn.setFixedSize(28, 28)
+        self.run_btn.clicked.connect(lambda: self.run_requested.emit(self))
+
         top.addWidget(self.name_edit)
         top.addWidget(self.status_label)
         top.addStretch()
         top.addWidget(CaptionLabel("启用"))
         top.addWidget(self.enable_switch)
+        top.addWidget(self.run_btn)
         top.addWidget(clone_btn)
         top.addWidget(up_btn)
         top.addWidget(down_btn)
@@ -136,11 +143,20 @@ class TaskCard(CardWidget):
         cond_row.addWidget(self.run_if_combo)
         cond_row.addStretch()
 
+        # ── 备注行 ──
+        self.notes_edit = LineEdit()
+        self.notes_edit.setPlaceholderText("备注（可选）")
+        font = self.notes_edit.font()
+        font.setPointSize(font.pointSize() - 1)
+        self.notes_edit.setFont(font)
+        self.notes_edit.textChanged.connect(self._on_notes_changed)
+
         root.addLayout(top)
         root.addLayout(path_row)
         root.addLayout(timeout_row)
         root.addLayout(extra_row)
         root.addLayout(cond_row)
+        root.addWidget(self.notes_edit)
 
     def _load_from_config(self):
         self.name_edit.setText(self.task.name)
@@ -154,6 +170,8 @@ class TaskCard(CardWidget):
         except (ValueError, KeyError):
             idx = 0
         self.run_if_combo.setCurrentIndex(idx)
+        self.notes_edit.setText(self.task.notes)
+        self._update_run_btn()
 
     def _on_changed(self):
         self.task.name          = self.name_edit.text()
@@ -162,7 +180,15 @@ class TaskCard(CardWidget):
         self.task.retry_count   = self.retry_spin.value()
         self.task.delay_seconds = self.delay_spin.value()
         self.task.run_if        = _RUN_IF_OPTIONS[self.run_if_combo.currentIndex()]
+        self._update_run_btn()
         self.changed.emit()
+
+    def _on_notes_changed(self, text: str):
+        self.task.notes = text
+        self.changed.emit()
+
+    def _update_run_btn(self):
+        self.run_btn.setEnabled(bool(self.task.enabled and self.task.exe_path))
 
     def _on_path_changed(self, text):
         self.task.exe_path = text

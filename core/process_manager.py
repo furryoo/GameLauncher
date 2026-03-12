@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import threading
 import time
 import psutil
 from PySide6.QtCore import QThread, Signal
@@ -46,16 +47,16 @@ class TaskRunner(QThread):
         super().__init__(parent)
         self.tasks = tasks
         self.post_action = post_action
-        self._stop_flag = False
+        self._stop_flag = threading.Event()
 
     def stop(self):
-        self._stop_flag = True
+        self._stop_flag.set()
 
     def run(self):
         prev_result: RunResult | None = None  # 上一任务的运行结果
 
         for i, task in enumerate(self.tasks):
-            if self._stop_flag:
+            if self._stop_flag.is_set():
                 self.log_signal.emit("已手动停止")
                 return
 
@@ -93,16 +94,15 @@ class TaskRunner(QThread):
                     f"⏳ {task.name} 等待 {task.delay_seconds} 秒后启动..."
                 )
                 for _ in range(task.delay_seconds):
-                    if self._stop_flag:
+                    if self._stop_flag.wait(1):
                         self.log_signal.emit("已手动停止")
                         return
-                    time.sleep(1)
 
             # ── 重试循环 ─────────────────────────────────────────
             max_attempts = 1 + max(0, task.retry_count)
 
             for attempt in range(max_attempts):
-                if self._stop_flag:
+                if self._stop_flag.is_set():
                     self.log_signal.emit("已手动停止")
                     return
 
@@ -111,10 +111,9 @@ class TaskRunner(QThread):
                         f"🔄 {task.name} 第 {attempt}/{task.retry_count} 次重试（30秒后启动）..."
                     )
                     for _ in range(30):
-                        if self._stop_flag:
+                        if self._stop_flag.wait(1):
                             self.log_signal.emit("已手动停止")
                             return
-                        time.sleep(1)
 
                 self.log_signal.emit(
                     f"▶ 正在启动 {task.name}"
@@ -141,7 +140,7 @@ class TaskRunner(QThread):
                 abnormal = False
 
                 while True:
-                    if self._stop_flag:
+                    if self._stop_flag.is_set():
                         _kill(proc)
                         watchdog.stop()
                         self.log_signal.emit("已手动停止")

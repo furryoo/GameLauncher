@@ -19,6 +19,7 @@ class TaskConfig:
     delay_seconds: int = 0  # 启动前等待秒数
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     run_if: str = RunIf.ALWAYS   # "always" / "prev_success" / "prev_fail"
+    notes: str = ""              # 备注（可选）
 
 
 @dataclass

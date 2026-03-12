@@ -2,6 +2,8 @@ import json
 import os
 import datetime
 from collections import defaultdict
+from contextlib import suppress
+from dataclasses import asdict
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame,
     QSystemTrayIcon, QMenu, QApplication, QInputDialog, QFileDialog,
@@ -172,6 +174,7 @@ class LauncherInterface(QWidget):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.task_list = DraggableTaskList()
         self.task_list.changed.connect(self._auto_save)
+        self.task_list.run_single.connect(self._start_single_task)
         scroll.setWidget(self.task_list)
         scroll.setMinimumHeight(280)
         root.addWidget(scroll, stretch=1)
@@ -338,7 +341,6 @@ class LauncherInterface(QWidget):
     # ── 导入 / 导出 ───────────────────────────────────────────
 
     def _export_config(self):
-        from dataclasses import asdict
         path, _ = QFileDialog.getSaveFileName(
             self, "导出配置", "game_launcher_config.json", "JSON (*.json)"
         )
@@ -450,6 +452,40 @@ class LauncherInterface(QWidget):
         self.stop_btn.setEnabled(True)
         self.status_label.setText("运行中...")
 
+    def _start_single_task(self, card):
+        task = card.task
+        if not task.enabled or not task.exe_path:
+            return
+        if self.runner and self.runner.isRunning():
+            InfoBar.warning("提示", "当前有任务正在运行，请等待完成后再单跑",
+                            parent=self, position=InfoBarPosition.TOP)
+            return
+
+        if self.runner:
+            self.runner.log_signal.disconnect()
+            self.runner.task_started.disconnect()
+            self.runner.task_finished.disconnect()
+            self.runner.task_failed.disconnect()
+            self.runner.all_done.disconnect()
+
+        if self._log_file:
+            self._log_file.close()
+        self._log_file = open(logger.new_log_path(), "w", encoding="utf-8")
+        logger.cleanup_old_logs()
+
+        self.task_list.reset_all_status()
+        self.runner = TaskRunner([task], post_action=PostAction.NONE)
+        self.runner.log_signal.connect(self._append_log)
+        self.runner.task_started.connect(self._on_task_started)
+        self.runner.task_finished.connect(self._on_task_finished)
+        self.runner.task_failed.connect(self._on_task_failed)
+        self.runner.all_done.connect(self._on_all_done)
+        self.runner.start()
+
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
+        self.status_label.setText(f"单跑: {task.name}")
+
     def stop_runner(self):
         if self.runner:
             self.runner.stop()
@@ -497,10 +533,7 @@ class LauncherInterface(QWidget):
                 self._log_file.write(line + "\n")
                 self._log_file.flush()
             except OSError:
-                try:
-                    self._log_file.close()
-                except Exception:
-                    pass
+                with suppress(Exception): self._log_file.close()
                 self._log_file = None
 
 
@@ -553,6 +586,24 @@ class HistoryInterface(QWidget):
         chart_layout.addWidget(self.bar_chart)
         root.addWidget(chart_card)
 
+        # ── 任务统计表格 ──
+        stats_card = CardWidget()
+        stats_vbox = QVBoxLayout(stats_card)
+        stats_vbox.setContentsMargins(12, 8, 12, 8)
+        stats_vbox.setSpacing(4)
+        stats_vbox.addWidget(CaptionLabel("任务统计"))
+        self.stats_table = TableWidget()
+        self.stats_table.setColumnCount(4)
+        self.stats_table.setHorizontalHeaderLabels(["任务", "总次数", "成功率", "平均时长"])
+        self.stats_table.horizontalHeader().setSectionResizeMode(
+            0, HeaderView.ResizeMode.Stretch
+        )
+        self.stats_table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
+        self.stats_table.setAlternatingRowColors(True)
+        self.stats_table.setFixedHeight(200)
+        stats_vbox.addWidget(self.stats_table)
+        root.addWidget(stats_card)
+
         # ── 历史表格 ──
         self.table = TableWidget()
         self.table.setColumnCount(4)
@@ -572,7 +623,21 @@ class HistoryInterface(QWidget):
     def refresh(self):
         self._all_records = history.get_records()
         self._update_chart()
+        self._update_stats()
         self._apply_filter()
+
+    def _update_stats(self):
+        stats = history.get_task_stats()[:10]
+        self.stats_table.setSortingEnabled(False)
+        self.stats_table.setRowCount(len(stats))
+        for row, s in enumerate(stats):
+            total = s["total"]
+            success_rate = f"{s['success'] / total * 100:.0f}%" if total else "—"
+            self.stats_table.setItem(row, 0, QTableWidgetItem(s["task"]))
+            self.stats_table.setItem(row, 1, QTableWidgetItem(str(total)))
+            self.stats_table.setItem(row, 2, QTableWidgetItem(success_rate))
+            self.stats_table.setItem(row, 3, QTableWidgetItem(format_duration(s["avg_sec"])))
+        self.stats_table.setSortingEnabled(True)
 
     def _update_chart(self):
         """统计最近 14 天每日运行总时长"""

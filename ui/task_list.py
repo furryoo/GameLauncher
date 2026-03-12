@@ -1,4 +1,5 @@
 import copy
+import uuid
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtCore import Signal
 from qfluentwidgets import PrimaryPushButton, FluentIcon
@@ -11,6 +12,7 @@ from ui.task_card import TaskCard
 class DraggableTaskList(QWidget):
     """任务列表，支持通过 ▲▼ 按钮调整顺序"""
     changed = Signal()
+    run_single = Signal(object)  # emits TaskCard
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -33,6 +35,7 @@ class DraggableTaskList(QWidget):
         card.move_up_requested.connect(self._move_up)
         card.move_down_requested.connect(self._move_down)
         card.clone_requested.connect(self._clone_card)
+        card.run_requested.connect(lambda c=card: self.run_single.emit(c))
 
     # ── 公开 API ─────────────────────────────────────────────
 
@@ -71,7 +74,6 @@ class DraggableTaskList(QWidget):
     def _clone_card(self, card: TaskCard):
         i = self._cards.index(card)
         new_config = copy.deepcopy(card.task)
-        import uuid
         new_config.id = uuid.uuid4().hex[:12]
         new_config.name = f"{new_config.name} 副本"
         new_card = TaskCard(new_config)
