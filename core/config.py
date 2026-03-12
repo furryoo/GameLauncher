@@ -1,4 +1,5 @@
 import os
+import uuid
 import yaml
 from dataclasses import dataclass, field, asdict
 from typing import List
@@ -16,6 +17,7 @@ class TaskConfig:
     enabled: bool = True
     retry_count: int = 0    # 失败后重试次数 (0 = 不重试)
     delay_seconds: int = 0  # 启动前等待秒数
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
 
 
 @dataclass
@@ -61,5 +63,7 @@ def save_config(config: AppConfig):
         "schedule": asdict(config.schedule),
         "notify": asdict(config.notify),
     }
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+    tmp_path = CONFIG_PATH + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
         yaml.dump(data, f, allow_unicode=True, default_flow_style=False)
+    os.replace(tmp_path, CONFIG_PATH)

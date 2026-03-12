@@ -11,9 +11,10 @@ from ui.theme import COLOR_SUCCESS, COLOR_INFO, COLOR_ERROR
 
 class TaskCard(CardWidget):
     changed = Signal()
-    remove_requested  = Signal(object)
-    move_up_requested = Signal(object)
+    remove_requested    = Signal(object)
+    move_up_requested   = Signal(object)
     move_down_requested = Signal(object)
+    clone_requested     = Signal(object)
 
     def __init__(self, task_config, parent=None):
         super().__init__(parent)
@@ -31,7 +32,7 @@ class TaskCard(CardWidget):
         root.setContentsMargins(16, 10, 16, 10)
         root.setSpacing(6)
 
-        # ── 顶部行：名称 + 状态 + 启用 + 排序 + 删除 ──
+        # ── 顶部行：名称 + 状态 + 启用 + 克隆 + 排序 + 删除 ──
         top = QHBoxLayout()
         self.name_edit = LineEdit()
         self.name_edit.setPlaceholderText("任务名称")
@@ -41,6 +42,11 @@ class TaskCard(CardWidget):
         self.status_label = CaptionLabel("等待中")
         self.enable_switch = SwitchButton()
         self.enable_switch.checkedChanged.connect(self._on_changed)
+
+        clone_btn = ToolButton(FluentIcon.COPY)
+        clone_btn.setToolTip("克隆任务")
+        clone_btn.setFixedSize(28, 28)
+        clone_btn.clicked.connect(lambda: self.clone_requested.emit(self))
 
         up_btn = ToolButton(FluentIcon.UP)
         up_btn.setToolTip("上移")
@@ -62,6 +68,7 @@ class TaskCard(CardWidget):
         top.addStretch()
         top.addWidget(CaptionLabel("启用"))
         top.addWidget(self.enable_switch)
+        top.addWidget(clone_btn)
         top.addWidget(up_btn)
         top.addWidget(down_btn)
         top.addWidget(del_btn)
@@ -69,7 +76,7 @@ class TaskCard(CardWidget):
         # ── 路径行 ──
         path_row = QHBoxLayout()
         self.path_edit = LineEdit()
-        self.path_edit.setPlaceholderText("程序路径（.exe）")
+        self.path_edit.setPlaceholderText("程序路径（.exe），支持 %USERPROFILE% 等环境变量")
         self.path_edit.textChanged.connect(self._on_path_changed)
         browse_btn = PushButton("浏览")
         browse_btn.setFixedWidth(64)
@@ -142,8 +149,8 @@ class TaskCard(CardWidget):
         self.changed.emit()
 
     def _validate_path(self):
-        text = self.task.exe_path
-        invalid = bool(text) and not os.path.isfile(text)
+        expanded = os.path.expandvars(self.task.exe_path)
+        invalid = bool(self.task.exe_path) and not os.path.isfile(expanded)
         self.path_edit.setStyleSheet(f"border: 1px solid {COLOR_ERROR};" if invalid else "")
 
     def _browse(self):

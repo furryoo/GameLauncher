@@ -12,6 +12,7 @@ from qfluentwidgets import (
     CaptionLabel, CardWidget, SwitchButton, TimeEdit,
     PlainTextEdit, SubtitleLabel, InfoBar, InfoBarPosition,
     SmoothScrollArea, TableWidget, HeaderView, ComboBox, CheckBox, LineEdit,
+    MessageBox,
 )
 from PySide6.QtWidgets import QTableWidgetItem
 
@@ -200,6 +201,12 @@ class LauncherInterface(QWidget):
         if self.runner and self.runner.isRunning():
             return
 
+        # ── 启动前预览确认 ───────────────────────────────────
+        task_names = "\n".join(f"  • {t.name}" for t in tasks)
+        box = MessageBox("确认启动", f"即将运行以下 {len(tasks)} 个任务：\n\n{task_names}", self)
+        if not box.exec():
+            return
+
         if self.runner:
             self.runner.log_signal.disconnect()
             self.runner.task_started.disconnect()
@@ -234,20 +241,22 @@ class LauncherInterface(QWidget):
 
     # ── Runner 信号处理 ───────────────────────────────────────
 
-    def _on_task_started(self, _index: int, name: str):
-        if card := self.task_list.get_card_by_name(name):
+    def _on_task_started(self, _index: int, task_id: str):
+        if card := self.task_list.get_card_by_id(task_id):
             card.set_status(CardStatus.RUNNING)
 
-    def _on_task_finished(self, _index: int, name: str, elapsed: int):
-        if card := self.task_list.get_card_by_name(name):
+    def _on_task_finished(self, _index: int, task_id: str, elapsed: int):
+        card = self.task_list.get_card_by_id(task_id)
+        if card:
             card.set_status(CardStatus.DONE, format_duration(elapsed))
-        history.add_record(name, RunResult.SUCCESS, elapsed)
+            history.add_record(card.task.name, RunResult.SUCCESS, elapsed)
 
-    def _on_task_failed(self, _index: int, name: str, reason: str):
-        if card := self.task_list.get_card_by_name(name):
+    def _on_task_failed(self, _index: int, task_id: str, reason: str):
+        card = self.task_list.get_card_by_id(task_id)
+        if card:
             card.set_status(CardStatus.ERROR)
-        history.add_record(name, RunResult.FAILED, 0)
-        notifier.send_bark(self.config.notify.bark_url, "任务失败", f"{name}：{reason}")
+            history.add_record(card.task.name, RunResult.FAILED, 0)
+            notifier.send_bark(self.config.notify.bark_url, "任务失败", f"{card.task.name}：{reason}")
 
     def _on_all_done(self, post_action: str):
         self.start_btn.setEnabled(True)
@@ -269,7 +278,11 @@ class LauncherInterface(QWidget):
                 self._log_file.write(line + "\n")
                 self._log_file.flush()
             except OSError:
-                pass
+                try:
+                    self._log_file.close()
+                except Exception:
+                    pass
+                self._log_file = None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -282,10 +295,15 @@ class HistoryInterface(QWidget):
         RunResult.TIMEOUT: "超时",
         RunResult.STOPPED: "已停止",
     }
+    # 过滤下拉选项 → 对应 RunResult 值（None 表示全部）
+    _FILTER_OPTIONS = [("全部", None), ("成功", RunResult.SUCCESS),
+                       ("失败", RunResult.FAILED), ("超时", RunResult.TIMEOUT),
+                       ("已停止", RunResult.STOPPED)]
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("historyInterface")
+        self._all_records: list[dict] = []
         self._setup_ui()
 
     def _setup_ui(self):
@@ -296,6 +314,14 @@ class HistoryInterface(QWidget):
         header = QHBoxLayout()
         header.addWidget(SubtitleLabel("运行历史"))
         header.addStretch()
+
+        # 状态筛选
+        header.addWidget(CaptionLabel("筛选:"))
+        self.filter_combo = ComboBox()
+        self.filter_combo.addItems([label for label, _ in self._FILTER_OPTIONS])
+        self.filter_combo.currentIndexChanged.connect(self._apply_filter)
+        header.addWidget(self.filter_combo)
+
         refresh_btn = PushButton(FluentIcon.SYNC, "刷新")
         refresh_btn.clicked.connect(self.refresh)
         header.addWidget(refresh_btn)
@@ -312,11 +338,23 @@ class HistoryInterface(QWidget):
         )
         self.table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
+        self.table.setSortingEnabled(True)
         root.addWidget(self.table)
         self.refresh()
 
     def refresh(self):
-        records = history.get_records()
+        self._all_records = history.get_records()
+        self._apply_filter()
+
+    def _apply_filter(self):
+        idx = self.filter_combo.currentIndex()
+        _, status_filter = self._FILTER_OPTIONS[idx]
+        if status_filter is None:
+            records = self._all_records
+        else:
+            records = [r for r in self._all_records if r.get("status") == status_filter]
+
+        self.table.setSortingEnabled(False)
         self.table.setRowCount(len(records))
         for row, rec in enumerate(records):
             status_key = rec.get("status", "")
@@ -326,6 +364,7 @@ class HistoryInterface(QWidget):
             self.table.setItem(row, 1, QTableWidgetItem(rec.get("task", "")))
             self.table.setItem(row, 2, QTableWidgetItem(status_label))
             self.table.setItem(row, 3, QTableWidgetItem(format_duration(secs)))
+        self.table.setSortingEnabled(True)
 
 
 # ─────────────────────────────────────────────────────────────

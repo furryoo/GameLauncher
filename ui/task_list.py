@@ -1,3 +1,4 @@
+import copy
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtCore import Signal
 from qfluentwidgets import PrimaryPushButton, FluentIcon
@@ -31,6 +32,7 @@ class DraggableTaskList(QWidget):
         card.remove_requested.connect(self.remove_card)
         card.move_up_requested.connect(self._move_up)
         card.move_down_requested.connect(self._move_down)
+        card.clone_requested.connect(self._clone_card)
 
     # ── 公开 API ─────────────────────────────────────────────
 
@@ -66,6 +68,19 @@ class DraggableTaskList(QWidget):
             self._layout.insertWidget(i + 1, card)
             self.changed.emit()
 
+    def _clone_card(self, card: TaskCard):
+        i = self._cards.index(card)
+        new_config = copy.deepcopy(card.task)
+        import uuid
+        new_config.id = uuid.uuid4().hex[:12]
+        new_config.name = f"{new_config.name} 副本"
+        new_card = TaskCard(new_config)
+        self._connect_card(new_card)
+        insert_pos = i + 1
+        self._cards.insert(insert_pos, new_card)
+        self._layout.insertWidget(insert_pos, new_card)
+        self.changed.emit()
+
     def _clear(self):
         """静默清空所有卡片，不触发 changed 信号"""
         for card in self._cards:
@@ -86,6 +101,9 @@ class DraggableTaskList(QWidget):
 
     def get_card_by_name(self, name: str) -> TaskCard | None:
         return next((c for c in self._cards if c.task.name == name), None)
+
+    def get_card_by_id(self, task_id: str) -> TaskCard | None:
+        return next((c for c in self._cards if c.task.id == task_id), None)
 
     def reset_all_status(self):
         for card in self._cards:
