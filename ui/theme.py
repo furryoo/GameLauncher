@@ -1,3 +1,15 @@
 COLOR_SUCCESS = "#2ecc71"
 COLOR_INFO    = "#3498db"
 COLOR_ERROR   = "#e74c3c"
+
+# 图表颜色（从 DailyBarChart 迁移）
+CHART_BAR_COLOR   = "#0078d4"
+CHART_AXIS_COLOR  = "#888888"
+CHART_LABEL_COLOR = "#555555"
+
+# 卡片背景叠加色（ARGB 格式，alpha≈9%）
+COLOR_SUCCESS_CARD_BG = "#182ecc71"
+COLOR_INFO_CARD_BG    = "#183498db"
+COLOR_ERROR_CARD_BG   = "#18e74c3c"
+
+CARD_OVERLAY_ALPHA = 24  # 9.4% opacity

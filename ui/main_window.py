@@ -6,9 +6,9 @@ from contextlib import suppress
 from dataclasses import asdict
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame,
-    QSystemTrayIcon, QMenu, QApplication, QInputDialog, QFileDialog,
+    QSystemTrayIcon, QMenu, QApplication, QInputDialog, QFileDialog, QToolTip,
 )
-from PySide6.QtCore import QTime, Signal, Qt
+from PySide6.QtCore import QTime, Signal, Qt, QRect
 from PySide6.QtGui import QAction, QPainter, QColor, QFont
 from qfluentwidgets import (
     FluentWindow, NavigationItemPosition, FluentIcon,
@@ -27,6 +27,7 @@ from core.process_manager import TaskRunner, execute_post_action
 from core.scheduler import AppScheduler
 from core import history, logger, notifier
 from ui.task_list import DraggableTaskList
+from ui.theme import CHART_BAR_COLOR, CHART_AXIS_COLOR, CHART_LABEL_COLOR
 from ui.version_view import VersionInterface
 
 _POST_ACTIONS = [PostAction.NONE, PostAction.SHUTDOWN, PostAction.HIBERNATE]
@@ -42,6 +43,9 @@ class DailyBarChart(QWidget):
         super().__init__(parent)
         self.setMinimumHeight(140)
         self._data: list[tuple[str, int]] = []  # [(MM-DD, seconds)]
+        self._bar_rects: list[tuple[QRect, str, int]] = []
+        self._hovered_idx: int = -1
+        self.setMouseTracking(True)
 
     def set_data(self, data: list[tuple[str, int]]):
         self._data = data
@@ -63,9 +67,9 @@ class DailyBarChart(QWidget):
         slot_w = chart_w // n
         bar_w = max(6, slot_w - 6)
 
-        bar_color   = QColor("#0078d4")
-        axis_color  = QColor("#888888")
-        label_color = QColor("#555555")
+        bar_color   = QColor(CHART_BAR_COLOR)
+        axis_color  = QColor(CHART_AXIS_COLOR)
+        label_color = QColor(CHART_LABEL_COLOR)
 
         font = QFont()
         font.setPointSize(7)
@@ -84,12 +88,14 @@ class DailyBarChart(QWidget):
                          Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                          max_label)
 
+        self._bar_rects = []
         for i, (label, val) in enumerate(self._data):
             x = margin_l + i * slot_w + (slot_w - bar_w) // 2
             bar_h = int(val / max_val * (chart_h - 4))
             y = margin_t + chart_h - bar_h
 
             painter.fillRect(x, y, bar_w, bar_h, bar_color)
+            self._bar_rects.append((QRect(x, y, bar_w, bar_h), label, val))
 
             # X 轴日期标签
             painter.setPen(label_color)
@@ -97,6 +103,21 @@ class DailyBarChart(QWidget):
                              Qt.AlignmentFlag.AlignHCenter, label)
 
         painter.end()
+
+    def mouseMoveEvent(self, event):
+        pos = event.position().toPoint()
+        for idx, (rect, label, val) in enumerate(self._bar_rects):
+            if rect.contains(pos):
+                if self._hovered_idx != idx:
+                    self._hovered_idx = idx
+                    QToolTip.showText(
+                        event.globalPosition().toPoint(),
+                        f"{label}  {format_duration(val)}",
+                        self
+                    )
+                return
+        self._hovered_idx = -1
+        QToolTip.hideText()
 
 
 # ─────────────────────────────────────────────────────────────
