@@ -41,7 +41,7 @@ class DailyBarChart(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(140)
+        self.setMinimumHeight(180)
         self._data: list[tuple[str, int]] = []  # [(MM-DD, seconds)]
         self._bar_rects: list[tuple[QRect, str, int]] = []
         self._hovered_idx: int = -1
@@ -87,6 +87,20 @@ class DailyBarChart(QWidget):
         painter.drawText(0, margin_t + 8, margin_l - 4, 16,
                          Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                          max_label)
+
+        # Y 轴分段网格线（3条刻度）
+        tick_count = 3
+        for ti in range(1, tick_count + 1):
+            ty = margin_t + chart_h - int(chart_h * ti / tick_count)
+            grid_color = QColor(CHART_AXIS_COLOR)
+            grid_color.setAlpha(50)
+            painter.setPen(grid_color)
+            painter.drawLine(margin_l, ty, margin_l + chart_w, ty)
+            painter.setPen(label_color)
+            tick_val = int(max_val * ti / tick_count)
+            painter.drawText(0, ty - 8, margin_l - 4, 16,
+                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                             format_duration(tick_val))
 
         self._bar_rects = []
         for i, (label, val) in enumerate(self._data):
@@ -152,7 +166,7 @@ class LauncherInterface(QWidget):
         # ── 场景（Profile）行 ──
         profile_card = CardWidget()
         profile_layout = QHBoxLayout(profile_card)
-        profile_layout.setContentsMargins(16, 8, 16, 8)
+        profile_layout.setContentsMargins(16, 12, 16, 12)
         profile_layout.setSpacing(8)
 
         profile_layout.addWidget(BodyLabel("场景:"))
@@ -253,7 +267,7 @@ class LauncherInterface(QWidget):
         # ── 通知设置 ──
         notify_card = CardWidget()
         notify_layout = QHBoxLayout(notify_card)
-        notify_layout.setContentsMargins(16, 10, 16, 10)
+        notify_layout.setContentsMargins(16, 12, 16, 12)
         notify_layout.setSpacing(10)
         notify_layout.addWidget(BodyLabel("Bark 推送:"))
         self.bark_edit = LineEdit()
@@ -277,7 +291,7 @@ class LauncherInterface(QWidget):
 
         self.log_edit = PlainTextEdit()
         self.log_edit.setReadOnly(True)
-        self.log_edit.setFixedHeight(180)
+        self.log_edit.setMinimumHeight(150)
         self.log_edit.setPlaceholderText("运行日志将在此显示...")
         root.addWidget(self.log_edit)
 
@@ -581,7 +595,7 @@ class HistoryInterface(QWidget):
     def _setup_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 16, 24, 16)
-        root.setSpacing(12)
+        root.setSpacing(16)
 
         # ── 顶部工具栏 ──
         header = QHBoxLayout()
@@ -600,8 +614,8 @@ class HistoryInterface(QWidget):
         # ── 每日运行时长图表 ──
         chart_card = CardWidget()
         chart_layout = QVBoxLayout(chart_card)
-        chart_layout.setContentsMargins(12, 8, 12, 8)
-        chart_layout.setSpacing(4)
+        chart_layout.setContentsMargins(16, 12, 16, 12)
+        chart_layout.setSpacing(8)
         chart_layout.addWidget(CaptionLabel("最近 14 天每日运行时长"))
         self.bar_chart = DailyBarChart()
         chart_layout.addWidget(self.bar_chart)
@@ -610,8 +624,8 @@ class HistoryInterface(QWidget):
         # ── 任务统计表格 ──
         stats_card = CardWidget()
         stats_vbox = QVBoxLayout(stats_card)
-        stats_vbox.setContentsMargins(12, 8, 12, 8)
-        stats_vbox.setSpacing(4)
+        stats_vbox.setContentsMargins(16, 12, 16, 12)
+        stats_vbox.setSpacing(8)
         stats_vbox.addWidget(CaptionLabel("任务统计"))
         self.stats_table = TableWidget()
         self.stats_table.setColumnCount(4)
@@ -621,7 +635,7 @@ class HistoryInterface(QWidget):
         )
         self.stats_table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
         self.stats_table.setAlternatingRowColors(True)
-        self.stats_table.setFixedHeight(200)
+        self.stats_table.setMinimumHeight(160)
         stats_vbox.addWidget(self.stats_table)
         root.addWidget(stats_card)
 
