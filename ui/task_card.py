@@ -137,8 +137,7 @@ class TaskCard(CardWidget):
         self.changed.emit()
 
     def _on_path_changed(self, text):
-        self.task.exe_path     = text
-        self.task.process_name = os.path.basename(text) if text else ""
+        self.task.exe_path = text
         self._path_timer.start()
         self.changed.emit()
 

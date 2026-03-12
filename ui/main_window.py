@@ -4,14 +4,14 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame,
     QSystemTrayIcon, QMenu, QApplication,
 )
-from PySide6.QtCore import Qt, QTime, Signal
+from PySide6.QtCore import QTime, Signal
 from PySide6.QtGui import QAction
 from qfluentwidgets import (
     FluentWindow, NavigationItemPosition, FluentIcon,
     PrimaryPushButton, PushButton, BodyLabel, StrongBodyLabel,
     CaptionLabel, CardWidget, SwitchButton, TimeEdit,
     PlainTextEdit, SubtitleLabel, InfoBar, InfoBarPosition,
-    SmoothScrollArea, TableWidget, HeaderView, ComboBox,
+    SmoothScrollArea, TableWidget, HeaderView, ComboBox, CheckBox, LineEdit,
 )
 from PySide6.QtWidgets import QTableWidgetItem
 
@@ -20,7 +20,7 @@ from core.enums import CardStatus, RunResult, PostAction
 from core.utils import format_duration
 from core.process_manager import TaskRunner, execute_post_action
 from core.scheduler import AppScheduler
-from core import history, logger
+from core import history, logger, notifier
 from ui.task_list import DraggableTaskList
 
 _POST_ACTIONS = [PostAction.NONE, PostAction.SHUTDOWN, PostAction.HIBERNATE]
@@ -67,37 +67,67 @@ class LauncherInterface(QWidget):
 
         # 调度 + 控制按钮
         sched_card = CardWidget()
-        sched_layout = QHBoxLayout(sched_card)
-        sched_layout.setContentsMargins(16, 12, 16, 12)
-        sched_layout.setSpacing(10)
+        sched_vbox = QVBoxLayout(sched_card)
+        sched_vbox.setContentsMargins(16, 12, 16, 12)
+        sched_vbox.setSpacing(8)
 
-        sched_layout.addWidget(BodyLabel("定时启动:"))
+        # 第一行：开关 / 时间 / 完成后 / 按钮
+        row1 = QHBoxLayout()
+        row1.setSpacing(10)
+        row1.addWidget(BodyLabel("定时启动:"))
         self.sched_switch = SwitchButton()
         self.sched_switch.checkedChanged.connect(self._on_schedule_changed)
-        sched_layout.addWidget(self.sched_switch)
+        row1.addWidget(self.sched_switch)
 
         self.time_edit = TimeEdit()
         self.time_edit.setDisplayFormat("HH:mm")
         self.time_edit.timeChanged.connect(self._on_schedule_changed)
-        sched_layout.addWidget(self.time_edit)
+        row1.addWidget(self.time_edit)
 
-        sched_layout.addSpacing(12)
-        sched_layout.addWidget(BodyLabel("完成后:"))
+        row1.addSpacing(12)
+        row1.addWidget(BodyLabel("完成后:"))
         self.post_action_combo = ComboBox()
         self.post_action_combo.addItems(["无", "关机", "休眠"])
         self.post_action_combo.currentIndexChanged.connect(self._on_schedule_changed)
-        sched_layout.addWidget(self.post_action_combo)
-        sched_layout.addStretch()
+        row1.addWidget(self.post_action_combo)
+        row1.addStretch()
 
         self.start_btn = PrimaryPushButton(FluentIcon.PLAY, "立即启动")
         self.start_btn.clicked.connect(self.start_runner)
         self.stop_btn = PushButton(FluentIcon.CLOSE, "停止")
         self.stop_btn.clicked.connect(self.stop_runner)
         self.stop_btn.setEnabled(False)
+        row1.addWidget(self.start_btn)
+        row1.addWidget(self.stop_btn)
 
-        sched_layout.addWidget(self.start_btn)
-        sched_layout.addWidget(self.stop_btn)
+        # 第二行：星期选择
+        row2 = QHBoxLayout()
+        row2.setSpacing(4)
+        row2.addWidget(CaptionLabel("重复:"))
+        self.day_checks: list[CheckBox] = []
+        for label in ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]:
+            cb = CheckBox(label)
+            cb.setChecked(True)
+            cb.checkStateChanged.connect(self._on_schedule_changed)
+            self.day_checks.append(cb)
+            row2.addWidget(cb)
+        row2.addStretch()
+
+        sched_vbox.addLayout(row1)
+        sched_vbox.addLayout(row2)
         root.addWidget(sched_card)
+
+        # 通知设置
+        notify_card = CardWidget()
+        notify_layout = QHBoxLayout(notify_card)
+        notify_layout.setContentsMargins(16, 10, 16, 10)
+        notify_layout.setSpacing(10)
+        notify_layout.addWidget(BodyLabel("Bark 推送:"))
+        self.bark_edit = LineEdit()
+        self.bark_edit.setPlaceholderText("https://api.day.app/your-key（留空则不推送）")
+        self.bark_edit.textChanged.connect(self._on_notify_changed)
+        notify_layout.addWidget(self.bark_edit)
+        root.addWidget(notify_card)
 
         # 日志面板
         log_header = QHBoxLayout()
@@ -130,6 +160,9 @@ class LauncherInterface(QWidget):
             self.time_edit.setTime(QTime(h, m))
         idx = _POST_ACTIONS.index(sched.post_action) if sched.post_action in _POST_ACTIONS else 0
         self.post_action_combo.setCurrentIndex(idx)
+        for i, cb in enumerate(self.day_checks):
+            cb.setChecked(i in sched.days)
+        self.bark_edit.setText(self.config.notify.bark_url)
         self._apply_schedule()
 
     def _auto_save(self):
@@ -140,13 +173,19 @@ class LauncherInterface(QWidget):
         self.config.schedule.enabled = self.sched_switch.isChecked()
         self.config.schedule.time = self.time_edit.time().toString("HH:mm")
         self.config.schedule.post_action = _POST_ACTIONS[self.post_action_combo.currentIndex()]
+        self.config.schedule.days = [i for i, cb in enumerate(self.day_checks) if cb.isChecked()]
         save_config(self.config)
         self._apply_schedule()
+
+    def _on_notify_changed(self):
+        self.config.notify.bark_url = self.bark_edit.text().strip()
+        save_config(self.config)
 
     def _apply_schedule(self):
         self.scheduler.set_schedule(
             self.config.schedule.enabled,
             self.config.schedule.time,
+            self.config.schedule.days,
         )
 
     # ── 运行控制 ──────────────────────────────────────────────
@@ -207,6 +246,7 @@ class LauncherInterface(QWidget):
         if card := self.task_list.get_card_by_name(name):
             card.set_status(CardStatus.ERROR)
         history.add_record(name, RunResult.FAILED, 0)
+        notifier.send_bark(self.config.notify.bark_url, "任务失败", f"{name}：{reason}")
 
     def _on_all_done(self, post_action: str):
         self.start_btn.setEnabled(True)
@@ -215,6 +255,7 @@ class LauncherInterface(QWidget):
         InfoBar.success("完成", "所有任务已运行完毕",
                         parent=self, position=InfoBarPosition.TOP)
         self.notify.emit("Game Launcher", "所有任务已完成 ✓")
+        notifier.send_bark(self.config.notify.bark_url, "Game Launcher", "所有任务已完成 ✓")
         execute_post_action(post_action, self._append_log)
 
     def _append_log(self, text: str):
