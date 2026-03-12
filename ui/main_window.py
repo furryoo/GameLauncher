@@ -22,6 +22,7 @@ from core.process_manager import TaskRunner, execute_post_action
 from core.scheduler import AppScheduler
 from core import history, logger, notifier
 from ui.task_list import DraggableTaskList
+from ui.version_view import VersionInterface
 
 _POST_ACTIONS = [PostAction.NONE, PostAction.SHUTDOWN, PostAction.HIBERNATE]
 
@@ -349,6 +350,11 @@ class MainWindow(FluentWindow):
         self.addSubInterface(
             self.history_view, FluentIcon.HISTORY, "历史记录",
             NavigationItemPosition.TOP,
+        )
+        self.version_view = VersionInterface()
+        self.addSubInterface(
+            self.version_view, FluentIcon.UPDATE, "版本管理",
+            NavigationItemPosition.BOTTOM,
         )
         self.navigationInterface.setExpandWidth(160)
 
