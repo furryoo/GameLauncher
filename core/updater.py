@@ -14,6 +14,11 @@ def is_frozen() -> bool:
 
 
 def current_version() -> str:
+    if is_frozen():
+        try:
+            return open(os.path.join(sys._MEIPASS, "version.txt"), encoding="utf-8").read().strip()
+        except Exception:
+            return "unknown"
     try:
         r = subprocess.run(
             ["git", "describe", "--tags", "--always"],
@@ -37,11 +42,11 @@ class UpdateWorker(QThread):
     def run(self):
         try:
             if self.action == "fetch":
-                self._fetch()
+                self._frozen_fetch() if is_frozen() else self._fetch()
             elif self.action == "update":
-                self._update()
+                self._frozen_update() if is_frozen() else self._update()
             elif self.action == "switch":
-                self._switch()
+                self._frozen_switch() if is_frozen() else self._switch()
         except Exception as e:
             self.done.emit(False, str(e))
 
@@ -96,3 +101,83 @@ class UpdateWorker(QThread):
             check=True, capture_output=True, cwd=_ROOT,
         )
         self.done.emit(True, f"已切换到 {self.version}，请重启应用生效")
+
+    # ── Frozen 路径：从 GitHub Releases 获取版本列表 ─────────────
+    def _frozen_fetch(self):
+        self.status.emit("正在连接 GitHub Releases...")
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{REPO}/releases",
+            headers={"User-Agent": "GameLauncher/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            releases = json.loads(resp.read())
+        versions = [r["tag_name"] for r in releases if r.get("assets")]
+        self.versions_ready.emit(versions)
+        self.done.emit(True, f"找到 {len(versions)} 个版本")
+
+    def _frozen_update(self):
+        self._frozen_download_and_prepare(target_version=None)
+
+    def _frozen_switch(self):
+        self._frozen_download_and_prepare(target_version=self.version)
+
+    def _frozen_download_and_prepare(self, target_version):
+        self.status.emit("正在连接 GitHub Releases...")
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{REPO}/releases",
+            headers={"User-Agent": "GameLauncher/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            releases = json.loads(resp.read())
+
+        if target_version is None:
+            release = next((r for r in releases if r.get("assets")), None)
+        else:
+            release = next((r for r in releases if r["tag_name"] == target_version and r.get("assets")), None)
+
+        if release is None:
+            self.done.emit(False, "未找到对应 Release 或无附件")
+            return
+
+        asset = next((a for a in release["assets"] if a["name"] == "GameLauncher.exe"), None)
+        if asset is None:
+            self.done.emit(False, "Release 中未找到 GameLauncher.exe")
+            return
+
+        url = asset["browser_download_url"]
+        dest = os.path.join(os.environ.get("TEMP", ""), "GameLauncher_new.exe")
+        self._download_asset(url, dest)
+        self._write_updater_bat(dest)
+        self.done.emit(True, "下载完成，点击重启以完成更新")
+
+    def _download_asset(self, url: str, dest: str):
+        req = urllib.request.Request(url, headers={"User-Agent": "GameLauncher/1.0"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            total = int(resp.headers.get("Content-Length", 0))
+            downloaded = 0
+            chunk = 512 * 1024
+            with open(dest, "wb") as f:
+                while True:
+                    data = resp.read(chunk)
+                    if not data:
+                        break
+                    f.write(data)
+                    downloaded += len(data)
+                    if total:
+                        pct = int(downloaded / total * 100)
+                        self.status.emit(f"下载中 {pct}%")
+
+    def _write_updater_bat(self, new_exe: str) -> str:
+        bat_path = os.path.join(os.environ.get("TEMP", ""), "gl_updater.bat")
+        current_exe = sys.executable
+        bat_content = (
+            "@echo off\r\n"
+            "timeout /t 2 /nobreak >nul\r\n"
+            ":retry\r\n"
+            f'move /y "{new_exe}" "{current_exe}" 2>nul || goto retry\r\n'
+            f'start "" "{current_exe}"\r\n'
+            'del "%~f0"\r\n'
+        )
+        with open(bat_path, "w", encoding="gbk") as f:
+            f.write(bat_content)
+        return bat_path

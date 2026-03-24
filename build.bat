@@ -7,11 +7,15 @@ echo.
 
 python -m pip install pyinstaller -q
 
+for /f "delims=" %%i in ('git describe --tags --always') do set VERSION=%%i
+echo %VERSION%> version.txt
+
 pyinstaller --noconfirm --onefile --windowed ^
     --name "GameLauncher" ^
     --uac-admin ^
     --add-data "config.yaml;." ^
     --add-data "history.json;." ^
+    --add-data "version.txt;." ^
     --hidden-import "apscheduler.schedulers.background" ^
     --hidden-import "apscheduler.triggers.cron" ^
     --hidden-import "apscheduler.executors.pool" ^

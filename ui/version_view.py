@@ -1,3 +1,5 @@
+import os
+import subprocess
 import sys
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
 from PySide6.QtWidgets import QApplication
@@ -22,11 +24,6 @@ class VersionInterface(QWidget):
         root.setSpacing(16)
         root.addWidget(SubtitleLabel("版本管理"))
 
-        if is_frozen():
-            root.addWidget(BodyLabel("当前运行的是打包版本（.exe），版本切换请在源码模式下使用。"))
-            root.addStretch()
-            return
-
         # ── 当前版本 ──────────────────────────────────────────
         cur_card = CardWidget()
         cur_row = QHBoxLayout(cur_card)
@@ -42,7 +39,8 @@ class VersionInterface(QWidget):
         update_row = QHBoxLayout(update_card)
         update_row.setContentsMargins(16, 12, 16, 12)
         update_row.setSpacing(12)
-        self.status_label = CaptionLabel("从 main 分支拉取最新代码")
+        hint = "从 GitHub Releases 下载" if is_frozen() else "从 main 分支拉取最新代码"
+        self.status_label = CaptionLabel(hint)
         update_row.addWidget(self.status_label)
         update_row.addStretch()
         self.update_btn = PrimaryPushButton(FluentIcon.UPDATE, "更新到最新")
@@ -130,12 +128,16 @@ class VersionInterface(QWidget):
             InfoBar.error("失败", message, parent=self, position=InfoBarPosition.TOP)
 
     def _restart(self):
+        if is_frozen():
+            bat = os.path.join(os.environ.get("TEMP", ""), "gl_updater.bat")
+            subprocess.Popen(["cmd", "/c", bat], creationflags=subprocess.DETACHED_PROCESS)
+            QApplication.instance().quit()
+            return
         if sys.platform == "win32":
             import ctypes
             ctypes.windll.shell32.ShellExecuteW(
                 None, "runas", sys.executable, " ".join(sys.argv), None, 1
             )
         else:
-            import subprocess
             subprocess.Popen([sys.executable] + sys.argv)
         QApplication.instance().quit()
