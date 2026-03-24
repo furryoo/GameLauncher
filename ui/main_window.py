@@ -447,35 +447,26 @@ class LauncherInterface(QWidget):
 
     # ── 运行控制 ──────────────────────────────────────────────
 
-    def start_runner(self):
-        tasks = [t for t in self.task_list.get_tasks() if t.enabled and t.exe_path]
-        if not tasks:
-            InfoBar.warning("提示", "没有可运行的任务，请先配置路径",
-                            parent=self, position=InfoBarPosition.TOP)
-            return
-        if self.runner and self.runner.isRunning():
-            return
-
-        # ── 启动前预览确认 ──
-        task_names = "\n".join(f"  • {t.name}" for t in tasks)
-        box = MessageBox("确认启动", f"即将运行以下 {len(tasks)} 个任务：\n\n{task_names}", self)
-        if not box.exec():
-            return
-
+    def _setup_runner(self, tasks, post_action, status_text):
         if self.runner:
-            self.runner.log_signal.disconnect()
-            self.runner.task_started.disconnect()
-            self.runner.task_finished.disconnect()
-            self.runner.task_failed.disconnect()
-            self.runner.all_done.disconnect()
+            self.runner.log_signal.disconnect(self._append_log)
+            self.runner.task_started.disconnect(self._on_task_started)
+            self.runner.task_finished.disconnect(self._on_task_finished)
+            self.runner.task_failed.disconnect(self._on_task_failed)
+            self.runner.all_done.disconnect(self._on_all_done)
+            self.runner.deleteLater()
 
         if self._log_file:
             self._log_file.close()
-        self._log_file = open(logger.new_log_path(), "w", encoding="utf-8")
+            self._log_file = None
+        try:
+            self._log_file = open(logger.new_log_path(), "w", encoding="utf-8")
+        except OSError:
+            pass
         logger.cleanup_old_logs()
 
         self.task_list.reset_all_status()
-        self.runner = TaskRunner(tasks, post_action=self.config.schedule.post_action)
+        self.runner = TaskRunner(tasks, post_action=post_action)
         self.runner.log_signal.connect(self._append_log)
         self.runner.task_started.connect(self._on_task_started)
         self.runner.task_finished.connect(self._on_task_finished)
@@ -485,7 +476,23 @@ class LauncherInterface(QWidget):
 
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self.status_label.setText("运行中...")
+        self.status_label.setText(status_text)
+
+    def start_runner(self):
+        tasks = [t for t in self.task_list.get_tasks() if t.enabled and t.exe_path]
+        if not tasks:
+            InfoBar.warning("提示", "没有可运行的任务，请先配置路径",
+                            parent=self, position=InfoBarPosition.TOP)
+            return
+        if self.runner and self.runner.isRunning():
+            return
+
+        task_names = "\n".join(f"  • {t.name}" for t in tasks)
+        box = MessageBox("确认启动", f"即将运行以下 {len(tasks)} 个任务：\n\n{task_names}", self)
+        if not box.exec():
+            return
+
+        self._setup_runner(tasks, self.config.schedule.post_action, "运行中...")
 
     def _start_single_task(self, card):
         task = card.task
@@ -496,30 +503,7 @@ class LauncherInterface(QWidget):
                             parent=self, position=InfoBarPosition.TOP)
             return
 
-        if self.runner:
-            self.runner.log_signal.disconnect()
-            self.runner.task_started.disconnect()
-            self.runner.task_finished.disconnect()
-            self.runner.task_failed.disconnect()
-            self.runner.all_done.disconnect()
-
-        if self._log_file:
-            self._log_file.close()
-        self._log_file = open(logger.new_log_path(), "w", encoding="utf-8")
-        logger.cleanup_old_logs()
-
-        self.task_list.reset_all_status()
-        self.runner = TaskRunner([task], post_action=PostAction.NONE)
-        self.runner.log_signal.connect(self._append_log)
-        self.runner.task_started.connect(self._on_task_started)
-        self.runner.task_finished.connect(self._on_task_finished)
-        self.runner.task_failed.connect(self._on_task_failed)
-        self.runner.all_done.connect(self._on_all_done)
-        self.runner.start()
-
-        self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
-        self.status_label.setText(f"单跑: {task.name}")
+        self._setup_runner([task], PostAction.NONE, f"单跑: {task.name}")
 
     def stop_runner(self):
         if self.runner:
@@ -656,13 +640,15 @@ class HistoryInterface(QWidget):
         self.refresh()
 
     def refresh(self):
-        self._all_records = history.get_records()
+        self._all_records, stats = history.get_records_and_stats()
         self._update_chart()
-        self._update_stats()
+        self._update_stats(stats)
         self._apply_filter()
 
-    def _update_stats(self):
-        stats = history.get_task_stats()[:10]
+    def _update_stats(self, stats=None):
+        if stats is None:
+            stats = history.get_task_stats()
+        stats = stats[:10]
         self.stats_table.setSortingEnabled(False)
         self.stats_table.setRowCount(len(stats))
         for row, s in enumerate(stats):

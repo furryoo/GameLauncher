@@ -10,16 +10,21 @@ from core.enums import RunResult, PostAction, RunIf
 from core.utils import format_duration
 from core.watchdog import ProcessWatchdog
 
+_SIGTERM_TIMEOUT = 3       # SIGTERM 后等待秒数，超时则 SIGKILL
+_RETRY_DELAY = 30          # 重试间隔秒数
+_POLL_INTERVAL = 2         # proc.wait() 轮询间隔秒数
+_MONITOR_INTERVAL = 30     # 资源采样间隔秒数
+
 
 def _kill(proc: subprocess.Popen):
-    """先 SIGTERM，等 3 秒，超时再强制 kill"""
+    """先 SIGTERM，等待后超时再强制 kill"""
     try:
         proc.terminate()
         try:
-            proc.wait(timeout=3)
+            proc.wait(timeout=_SIGTERM_TIMEOUT)
         except subprocess.TimeoutExpired:
             proc.kill()
-    except Exception:
+    except OSError:
         pass
 
 
@@ -108,9 +113,9 @@ class TaskRunner(QThread):
 
                 if attempt > 0:
                     self.log_signal.emit(
-                        f"🔄 {task.name} 第 {attempt}/{task.retry_count} 次重试（30秒后启动）..."
+                        f"🔄 {task.name} 第 {attempt}/{task.retry_count} 次重试（{_RETRY_DELAY}秒后启动）..."
                     )
-                    for _ in range(30):
+                    for _ in range(_RETRY_DELAY):
                         if self._stop_flag.wait(1):
                             self.log_signal.emit("已手动停止")
                             return
@@ -127,7 +132,7 @@ class TaskRunner(QThread):
                         exe_path,
                         cwd=os.path.dirname(exe_path),
                     )
-                except Exception as e:
+                except OSError as e:
                     reason = f"启动失败: {e}"
                     self.log_signal.emit(f"✗ {task.name} {reason}")
                     continue  # 触发重试
@@ -139,55 +144,55 @@ class TaskRunner(QThread):
                 timeout = task.timeout if task.timeout > 0 else None
                 abnormal = False
 
-                while True:
-                    if self._stop_flag.is_set():
-                        _kill(proc)
-                        watchdog.stop()
-                        self.log_signal.emit("已手动停止")
-                        return
+                try:
+                    while True:
+                        if self._stop_flag.is_set():
+                            _kill(proc)
+                            self.log_signal.emit("已手动停止")
+                            return
 
-                    if watchdog.is_frozen():
-                        _kill(proc)
-                        self.log_signal.emit(
-                            f"⚠ {task.name} 进程卡死（CPU持续为0%），已强制结束"
-                        )
-                        abnormal = True
-                        break
-
-                    try:
-                        ret = proc.wait(timeout=2)
-                        if ret != 0:
+                        if watchdog.is_frozen():
+                            _kill(proc)
                             self.log_signal.emit(
-                                f"⚠ {task.name} 异常退出（退出码: {ret}）"
+                                f"⚠ {task.name} 进程卡死（CPU持续为0%），已强制结束"
                             )
                             abnormal = True
-                        break
-                    except subprocess.TimeoutExpired:
-                        pass
+                            break
 
-                    if timeout and int(time.time() - start_time) >= timeout:
-                        _kill(proc)
-                        self.log_signal.emit(
-                            f"⚠ {task.name} 超时（{timeout}秒），已强制结束"
-                        )
-                        abnormal = True
-                        break
-
-                    # ── 进程资源监控（每 30s 采样一次）─────────────
-                    now = time.time()
-                    if now - last_monitor >= 30:
                         try:
-                            p = psutil.Process(proc.pid)
-                            cpu = p.cpu_percent(interval=None)
-                            mem_mb = p.memory_info().rss / 1024 / 1024
-                            self.log_signal.emit(
-                                f"  📊 {task.name}  CPU {cpu:.1f}%  内存 {mem_mb:.0f} MB"
-                            )
-                        except psutil.NoSuchProcess:
+                            ret = proc.wait(timeout=_POLL_INTERVAL)
+                            if ret != 0:
+                                self.log_signal.emit(
+                                    f"⚠ {task.name} 异常退出（退出码: {ret}）"
+                                )
+                                abnormal = True
+                            break
+                        except subprocess.TimeoutExpired:
                             pass
-                        last_monitor = now
 
-                watchdog.stop()
+                        if timeout and int(time.time() - start_time) >= timeout:
+                            _kill(proc)
+                            self.log_signal.emit(
+                                f"⚠ {task.name} 超时（{timeout}秒），已强制结束"
+                            )
+                            abnormal = True
+                            break
+
+                        now = time.time()
+                        if now - last_monitor >= _MONITOR_INTERVAL:
+                            try:
+                                p = psutil.Process(proc.pid)
+                                cpu = p.cpu_percent(interval=None)
+                                mem_mb = p.memory_info().rss / 1024 / 1024
+                                self.log_signal.emit(
+                                    f"  📊 {task.name}  CPU {cpu:.1f}%  内存 {mem_mb:.0f} MB"
+                                )
+                            except psutil.Error:
+                                pass
+                            last_monitor = now
+                finally:
+                    watchdog.stop()
+
                 elapsed = int(time.time() - start_time)
 
                 if not abnormal:

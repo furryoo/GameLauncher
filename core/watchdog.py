@@ -27,13 +27,13 @@ class ProcessWatchdog:
         zero_count = 0
         try:
             proc = psutil.Process(self.pid)
-        except psutil.NoSuchProcess:
+        except psutil.Error:
             return
 
         while not self._stop.wait(timeout=self.interval):
             try:
                 cpu = proc.cpu_percent(interval=1)
-            except psutil.NoSuchProcess:
+            except psutil.Error:
                 return
             if cpu == 0.0:
                 zero_count += 1

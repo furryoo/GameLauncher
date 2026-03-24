@@ -1,6 +1,7 @@
 import json
 import os
 import datetime
+from collections import defaultdict
 
 from core.enums import RunResult
 
@@ -19,8 +20,10 @@ def _load() -> list:
 
 
 def _save(records: list):
-    with open(HISTORY_PATH, "w", encoding="utf-8") as f:
+    tmp_path = HISTORY_PATH + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(records[-MAX_RECORDS:], f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, HISTORY_PATH)
 
 
 def add_record(task_name: str, status: RunResult, duration_seconds: int):
@@ -40,12 +43,9 @@ def get_records() -> list:
     return _load()[::-1]
 
 
-def get_task_stats() -> list[dict]:
-    """按任务名聚合，返回 [{task, total, success, failed, avg_sec}] 按 total 降序"""
-    from collections import defaultdict
-    from core.enums import RunResult
+def _compute_stats(records: list) -> list[dict]:
     totals: dict[str, dict] = defaultdict(lambda: {"total": 0, "success": 0, "failed": 0, "dur_sum": 0})
-    for rec in _load():
+    for rec in records:
         name = rec.get("task", "")
         if not name:
             continue
@@ -67,3 +67,14 @@ def get_task_stats() -> list[dict]:
         })
     result.sort(key=lambda x: x["total"], reverse=True)
     return result
+
+
+def get_task_stats() -> list[dict]:
+    """按任务名聚合，返回 [{task, total, success, failed, avg_sec}] 按 total 降序"""
+    return _compute_stats(_load())
+
+
+def get_records_and_stats() -> tuple[list, list[dict]]:
+    """一次加载，返回 (records_newest_first, stats)"""
+    raw = _load()
+    return raw[::-1], _compute_stats(raw)

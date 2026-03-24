@@ -56,8 +56,11 @@ def _load_tasks(raw: list) -> List[TaskConfig]:
 def load_config() -> AppConfig:
     if not os.path.exists(CONFIG_PATH):
         return AppConfig()
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except (yaml.YAMLError, OSError):
+        return AppConfig()
 
     # ── 加载 profiles（兼容旧版只有 tasks 的配置）─────────────────
     raw_profiles = data.get("profiles")
