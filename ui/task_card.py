@@ -43,6 +43,19 @@ class TaskCard(SimpleCardWidget):
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._setup_ui()
         self._load_from_config()
+        # 强制使用深色实心背景，避免主题检测失败时背景变成不透明白色
+        with suppress(Exception):
+            self.setBackgroundColor(self._normalBackgroundColor())
+
+    # 重写背景色：硬编码深色，绕开 isDarkTheme() 检测失效
+    def _normalBackgroundColor(self):
+        return QColor(45, 45, 45)
+
+    def _hoverBackgroundColor(self):
+        return QColor(55, 55, 55)
+
+    def _pressedBackgroundColor(self):
+        return QColor(40, 40, 40)
 
     def _setup_ui(self):
         self.setMaximumHeight(HEIGHT_EXPANDED)
