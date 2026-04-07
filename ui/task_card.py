@@ -1,7 +1,7 @@
 import os
 from contextlib import suppress
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QFileDialog
-from PySide6.QtCore import Signal, QTimer, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Signal, QTimer
 from PySide6.QtGui import QPainter, QColor
 from qfluentwidgets import (
     SimpleCardWidget, LineEdit, PushButton, BodyLabel, CaptionLabel,
@@ -38,9 +38,6 @@ class TaskCard(SimpleCardWidget):
         self._path_timer.timeout.connect(self._validate_path)
         self._expanded = True
         self._overlay_color: QColor | None = None
-        self._anim = QPropertyAnimation(self, b"maximumHeight")
-        self._anim.setDuration(200)
-        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._setup_ui()
         self._load_from_config()
         # 强制使用深色实心背景，避免主题检测失败时背景变成不透明白色
@@ -58,8 +55,8 @@ class TaskCard(SimpleCardWidget):
         return QColor(40, 40, 40)
 
     def _setup_ui(self):
-        # 不设 maximumHeight：避免在 ScrollArea 内被压缩，让 sizeHint 决定自然高度
-        self.setMinimumHeight(HEIGHT_COLLAPSED)
+        # 固定高度：无论窗口怎么拉伸都不会压缩文字
+        self.setFixedHeight(HEIGHT_EXPANDED)
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 10, 16, 10)
         root.setSpacing(6)
@@ -260,41 +257,10 @@ class TaskCard(SimpleCardWidget):
         if self._expanded == expanded:
             return
         self._expanded = expanded
-        self.expand_btn.setIcon(
-            FluentIcon.UP if expanded else FluentIcon.DOWN
-        )
-        end = HEIGHT_EXPANDED if expanded else HEIGHT_COLLAPSED
-        if animated:
-            if expanded:
-                self._detail_widget.setVisible(True)
-            else:
-                self._anim.finished.connect(self._on_collapse_done)
-            self._anim.stop()
-            # 用当前实际高度作为起点，避免 maximumHeight 默认无穷大导致动画跳变
-            start = self.height() if self.maximumHeight() > 10000 else self.maximumHeight()
-            self._anim.setStartValue(start)
-            self._anim.setEndValue(end)
-            self._anim.start()
-            # 展开完成后释放最大高度限制，允许卡片在 ScrollArea 中按内容自然撑开
-            if expanded:
-                with suppress(RuntimeError):
-                    self._anim.finished.connect(self._release_max_height)
-        else:
-            if expanded:
-                self.setMaximumHeight(16777215)
-            else:
-                self.setMaximumHeight(end)
-            self._detail_widget.setVisible(expanded)
+        self.expand_btn.setIcon(FluentIcon.UP if expanded else FluentIcon.DOWN)
+        self._detail_widget.setVisible(expanded)
+        self.setFixedHeight(HEIGHT_EXPANDED if expanded else HEIGHT_COLLAPSED)
 
-    def _release_max_height(self):
-        self.setMaximumHeight(16777215)
-        with suppress(RuntimeError):
-            self._anim.finished.disconnect(self._release_max_height)
-
-    def _on_collapse_done(self):
-        self._detail_widget.setVisible(False)
-        with suppress(RuntimeError):
-            self._anim.finished.disconnect(self._on_collapse_done)
 
     def set_status(self, status: CardStatus | str, elapsed_text: str = ""):
         s = CardStatus(status)
