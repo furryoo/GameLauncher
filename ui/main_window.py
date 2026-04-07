@@ -15,10 +15,10 @@ from qfluentwidgets import (
     PrimaryPushButton, PushButton, BodyLabel, StrongBodyLabel,
     CaptionLabel, CardWidget, SwitchButton, TimeEdit,
     PlainTextEdit, SubtitleLabel, InfoBar, InfoBarPosition,
-    SmoothScrollArea, TableWidget, HeaderView, ComboBox, CheckBox, LineEdit,
+    SmoothScrollArea, TableWidget, ComboBox, CheckBox, LineEdit,
     MessageBox, ToolButton,
 )
-from PySide6.QtWidgets import QTableWidgetItem
+from PySide6.QtWidgets import QTableWidgetItem, QHeaderView as HeaderView
 
 from core.config import TaskConfig, load_config, save_config, _filter_fields
 from core.enums import CardStatus, RunResult, PostAction
