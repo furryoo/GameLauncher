@@ -9,6 +9,31 @@ REPO = "furryoo/GameLauncher"
 _ROOT = os.path.dirname(os.path.dirname(__file__))
 
 
+def _read_token() -> str:
+    """优先环境变量，其次用户目录下 ~/.gamelauncher_token"""
+    tok = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if tok:
+        return tok.strip()
+    token_file = os.path.join(os.path.expanduser("~"), ".gamelauncher_token")
+    if os.path.isfile(token_file):
+        try:
+            return open(token_file, encoding="utf-8").read().strip()
+        except Exception:
+            return ""
+    return ""
+
+
+def _api_headers() -> dict:
+    headers = {
+        "User-Agent": "GameLauncher/1.0",
+        "Accept": "application/vnd.github+json",
+    }
+    tok = _read_token()
+    if tok:
+        headers["Authorization"] = f"Bearer {tok}"
+    return headers
+
+
 def is_frozen() -> bool:
     return getattr(sys, "frozen", False)
 
@@ -56,7 +81,7 @@ class UpdateWorker(QThread):
         try:
             req = urllib.request.Request(
                 f"https://api.github.com/repos/{REPO}/tags",
-                headers={"User-Agent": "GameLauncher/1.0"},
+                headers=_api_headers(),
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 tags = json.loads(resp.read())
@@ -107,7 +132,7 @@ class UpdateWorker(QThread):
         self.status.emit("正在连接 GitHub Releases...")
         req = urllib.request.Request(
             f"https://api.github.com/repos/{REPO}/releases",
-            headers={"User-Agent": "GameLauncher/1.0"},
+            headers=_api_headers(),
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
             releases = json.loads(resp.read())
@@ -125,7 +150,7 @@ class UpdateWorker(QThread):
         self.status.emit("正在连接 GitHub Releases...")
         req = urllib.request.Request(
             f"https://api.github.com/repos/{REPO}/releases",
-            headers={"User-Agent": "GameLauncher/1.0"},
+            headers=_api_headers(),
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
             releases = json.loads(resp.read())
@@ -151,7 +176,7 @@ class UpdateWorker(QThread):
         self.done.emit(True, "下载完成，点击重启以完成更新")
 
     def _download_asset(self, url: str, dest: str):
-        req = urllib.request.Request(url, headers={"User-Agent": "GameLauncher/1.0"})
+        req = urllib.request.Request(url, headers=_api_headers())
         with urllib.request.urlopen(req, timeout=60) as resp:
             total = int(resp.headers.get("Content-Length", 0))
             downloaded = 0
