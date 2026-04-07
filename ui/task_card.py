@@ -4,7 +4,7 @@ from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QFileDialog
 from PySide6.QtCore import Signal, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QPainter, QColor
 from qfluentwidgets import (
-    CardWidget, LineEdit, PushButton, BodyLabel, CaptionLabel,
+    SimpleCardWidget, LineEdit, PushButton, BodyLabel, CaptionLabel,
     SpinBox, SwitchButton, ToolButton, FluentIcon, ComboBox,
     IndeterminateProgressBar,
 )
@@ -21,7 +21,7 @@ HEIGHT_COLLAPSED = 88
 HEIGHT_EXPANDED  = 275
 
 
-class TaskCard(CardWidget):
+class TaskCard(SimpleCardWidget):
     changed = Signal()
     remove_requested    = Signal(object)
     move_up_requested   = Signal(object)
