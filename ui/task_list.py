@@ -25,7 +25,8 @@ class DraggableTaskList(QWidget):
         add_btn = PrimaryPushButton(FluentIcon.ADD, "添加任务")
         add_btn.clicked.connect(lambda: self.add_task())
         self._layout.addWidget(add_btn)
-        self._layout.addStretch()
+        # 不加 addStretch：避免在 setWidgetResizable=True 的 ScrollArea 内
+        # 把卡片剩余空间吸光，导致卡片被压缩到 minimumHeight
 
     # ── 内部工具 ────────────────────────────────────────────
 
