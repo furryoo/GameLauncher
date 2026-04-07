@@ -707,6 +707,9 @@ class MainWindow(FluentWindow):
         super().__init__()
         self.setWindowTitle("Game Automation Launcher")
         self.resize(900, 740)
+        # 关闭 Win11 Mica 半透明效果，避免卡片背景透出桌面颜色导致对比度差
+        with suppress(Exception):
+            self.setMicaEffectEnabled(False)
         self._setup_interfaces()
         self._setup_tray()
 
