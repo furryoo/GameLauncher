@@ -87,7 +87,7 @@ class TaskCard(CardWidget):
         self.run_btn.setFixedSize(28, 28)
         self.run_btn.clicked.connect(lambda: self.run_requested.emit(self))
 
-        self.expand_btn = ToolButton(FluentIcon.CHEVRON_UP)
+        self.expand_btn = ToolButton(FluentIcon.UP)
         self.expand_btn.setFixedSize(28, 28)
         self.expand_btn.setToolTip("折叠/展开")
         self.expand_btn.clicked.connect(self._toggle_expand)
@@ -248,7 +248,7 @@ class TaskCard(CardWidget):
             return
         self._expanded = expanded
         self.expand_btn.setIcon(
-            FluentIcon.CHEVRON_UP if expanded else FluentIcon.CHEVRON_DOWN
+            FluentIcon.UP if expanded else FluentIcon.DOWN
         )
         end = HEIGHT_EXPANDED if expanded else HEIGHT_COLLAPSED
         if animated:
