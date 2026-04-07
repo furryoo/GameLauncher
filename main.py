@@ -15,15 +15,25 @@ if sys.platform == "win32":
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from qfluentwidgets import setTheme, Theme
 
 from ui.main_window import MainWindow
+
+
+def _icon_path() -> str:
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, "assets", "icon.ico")
 
 
 def main():
     app = QApplication(sys.argv)
     app.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings)
     app.setQuitOnLastWindowClosed(False)  # 允许最小化到托盘
+
+    icon_path = _icon_path()
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
 
     setTheme(Theme.DARK)
 

@@ -40,9 +40,11 @@ jobs:
           pyinstaller --noconfirm --onefile --windowed `
             --name "GameLauncher" `
             --uac-admin `
+            --icon "assets/icon.ico" `
             --add-data "config.yaml;." `
             --add-data "history.json;." `
             --add-data "version.txt;." `
+            --add-data "assets/icon.ico;assets" `
             --hidden-import "apscheduler.schedulers.background" `
             --hidden-import "apscheduler.triggers.cron" `
             --hidden-import "apscheduler.executors.pool" `
